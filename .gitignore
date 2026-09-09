@@ -17,6 +17,8 @@ nupkg/
 output.txt
 .vs/*
 
-# images a test wrote; the .expected beside them is what is asserted
+# images a test wrote; the .expected beside them is what is asserted, and
+# images/ holds the ones this repository keeps rather than any it produced
 *.png
 !*.png.expected
+!images/*.png
