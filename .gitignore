@@ -21,4 +21,4 @@ output.txt
 # images/ holds the ones this repository keeps rather than any it produced
 *.png
 !*.png.expected
-!images/*.png
+!**/images/*.png
