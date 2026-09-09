@@ -162,6 +162,20 @@ namespace Raster is
             )
         si
 
+        // Names an image this program wrote, at the point in the output
+        // where it belongs.
+        //
+        // A console program that draws has two outputs, and nothing in the
+        // text says where the pictures go. This writes a marker that says
+        // so, for whatever is displaying the output to interpret: a
+        // publisher can turn it into a reference the destination understands,
+        // and a console that can show images can show it in place. Programs
+        // that are only read on a terminal lose nothing, since the marker
+        // names the file they were told about anyway.
+        show(path: string) is
+            IO.Std.write_line("<<image {path}>>")
+        si
+
         // Text with its baseline at (x, y) in user coordinates, `height`
         // pixels from baseline to the top of a capital. The weight follows
         // the height, since a stroke font carries none of its own.

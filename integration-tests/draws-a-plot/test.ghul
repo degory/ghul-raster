@@ -1,4 +1,3 @@
-use IO.Std.write_line
 use System.Math
 use Raster.IMAGE
 
@@ -35,5 +34,4 @@ image.colour(0ub, 0ub, 0ub)
 image.text(0.1D, 1.15D, 14.0D, "sin x")
 
 image.write("plot.png")
-
-write_line("wrote plot.png")
+image.show("plot.png")

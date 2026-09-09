@@ -57,6 +57,32 @@ will be, for placing it. The weight follows the height unless it is given.
 The face is a Hershey stroke font, so text is drawn with the same strokes as
 everything else, and scales without a rasteriser.
 
+## Saying where an image belongs
+
+A program that draws has two outputs, and nothing in its text says where the
+pictures go.
+
+```ghul
+image.write("plot.png")
+image.show("plot.png")
+```
+
+`show` writes a line naming the image:
+
+```
+<<image plot.png>>
+```
+
+That is a contract with whatever displays the output, not an instruction to
+anything in particular. A publisher can turn it into a reference its
+destination understands and put the file where that reference points; a
+console that can display images can display it in place; a terminal shows the
+line, which names a file the reader was told about anyway.
+
+Nothing here knows where the output is going, and nothing that reads the
+marker needs to know how the image was drawn.
+
+
 ## The font
 
 The Hershey Fonts were originally created by Dr. A. V. Hershey while working
@@ -81,21 +107,3 @@ The unit tests cover the font and the geometry. The integration test draws a
 plot and compares it against `plot.png.expected`, which is the assertion that
 matters: it is the whole picture, and it notices a stroke a fifth of a pixel
 too thin.
-
-## Publishing
-
-The package is published by trusted publishing rather than an API key.
-nuget.org trades a token GitHub signs for this repository and this workflow
-for a key that lasts an hour and is spent once, so there is no long-lived
-secret to leak or rotate.
-
-The policy lives on nuget.org under Trusted Publishing, and names the
-repository owner, the repository, and `cicd.yml` as the workflow file. The
-only secret this repository holds is `NUGET_USER`, the nuget.org profile name
-the token is exchanged against, which is not sensitive but is not worth
-writing into a public workflow either.
-
-A new policy is only provisionally active for seven days: nuget.org pins it to
-the repository and owner ids, and it learns those from the first successful
-publish. If nothing publishes in that window the policy goes quiet until the
-window is restarted, which reads as a broken setup and is not one.
