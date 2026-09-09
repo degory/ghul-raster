@@ -146,6 +146,44 @@ namespace Raster.Tests is
                 |> reduce(0, (a, b) => a + b)
 
         @Test()
+        A_blend_lays_part_of_the_colour_over_what_is_there() is
+            let image = IMAGE(4, 4)
+
+            image.colour(0ub, 0ub, 0ub)
+
+            image.blend(1, 1, 0.5D)
+
+            let half = image.pixel(1, 1)
+
+            assert half.red > 0ub /\ half.red < 255ub
+                else "half cover left the pixel white or black"
+
+            image.blend(2, 2, 1.0D)
+
+            assert image.pixel(2, 2) =~ (red = 0ub, green = 0ub, blue = 0ub)
+
+            image.blend(3, 3, 0.0D)
+
+            assert _white(image, 3, 3) else "no cover marked the pixel"
+        si
+
+        @Test()
+        A_blend_outside_the_image_is_ignored() is
+            let image = IMAGE(2, 2)
+
+            image.colour(0ub, 0ub, 0ub)
+
+            image.blend(-1, 0, 1.0D)
+            image.blend(0, 5, 1.0D)
+
+            for y in 0..2 do
+                for x in 0..2 do
+                    assert _white(image, x, y) else "{x}, {y} was marked"
+                od
+            od
+        si
+
+        @Test()
         Text_is_as_wide_as_it_says_and_grows_with_its_height() is
             let image = IMAGE(10, 10)
 
