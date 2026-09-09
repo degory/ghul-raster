@@ -13,5 +13,7 @@
     <ProjectReference Include="../ghul-raster.ghulproj" />
 
     <GhulSources Include="**/*.ghul" />
+
+    <None Include="images/*.png" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

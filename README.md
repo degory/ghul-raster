@@ -55,6 +55,14 @@ part of the current colour over what is already there, which is what a program
 drawing its own shapes needs to antialias them. A position outside the image is
 ignored by both writers.
 
+## Reading a PNG
+
+`IMAGE.read` decodes a PNG file into an image, and `IMAGE.decode` does the
+same from bytes already in hand. Eight bits a channel and not interlaced,
+which is what anything writing a PNG for a program to read produces: grey,
+truecolour and indexed, each with or without alpha. An image carries no alpha
+of its own, so a transparent pixel is composited onto the white it starts as.
+
 ## A turtle
 
 `TURTLE` is a pen on an image, at a position and a heading, told how far to go

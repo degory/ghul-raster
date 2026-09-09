@@ -43,6 +43,76 @@ namespace Raster.Tests is
     si
 
     @TestClass()
+    class READ_Tests is
+        init() is si
+
+        @Test()
+        An_image_reads_back_as_it_was_written() is
+            let written = IMAGE(30, 20)
+
+            written.colour(10ub, 90ub, 200ub)
+            written.stroke(3.0D)
+            written.line(2.0D, 2.0D, 27.0D, 17.0D)
+
+            let path = IO.Path.get_temp_file_name()
+
+            written.write(path)
+
+            let read = IMAGE.read(path)
+
+            IO.File.delete(path)
+
+            assert read.width == written.width
+            assert read.height == written.height
+
+            for y in 0..written.height do
+                for x in 0..written.width do
+                    assert read.pixel(x, y) =~ written.pixel(x, y)
+                        else "{x}, {y} came back different"
+                od
+            od
+        si
+
+        @Test()
+        Grey_reads_as_the_same_value_in_every_channel() is
+            let image = IMAGE.read("images/grey.png")
+
+            assert image.pixel(0, 0) =~ (red = 0ub, green = 0ub, blue = 0ub)
+            assert image.pixel(1, 0) =~ (red = 64ub, green = 64ub, blue = 64ub)
+            assert image.pixel(0, 1) =~
+                (red = 128ub, green = 128ub, blue = 128ub)
+            assert image.pixel(1, 1) =~
+                (red = 255ub, green = 255ub, blue = 255ub)
+        si
+
+        @Test()
+        An_index_reads_as_its_palette_entry() is
+            let image = IMAGE.read("images/indexed.png")
+
+            assert image.pixel(0, 0) =~ (red = 255ub, green = 0ub, blue = 0ub)
+            assert image.pixel(1, 0) =~ (red = 0ub, green = 255ub, blue = 0ub)
+            assert image.pixel(0, 1) =~ (red = 0ub, green = 0ub, blue = 255ub)
+        si
+
+        @Test()
+        Alpha_is_composited_onto_the_white_an_image_starts_as() is
+            let image = IMAGE.read("images/translucent.png")
+
+            assert image.pixel(0, 0) =~ (red = 255ub, green = 0ub, blue = 0ub)
+                else "an opaque pixel changed"
+
+            let half = image.pixel(1, 0)
+
+            assert half.green > 100ub /\ half.green < 160ub
+                else "half cover did not land between the colour and white"
+
+            assert image.pixel(0, 1) =~
+                (red = 255ub, green = 255ub, blue = 255ub)
+                else "a transparent pixel is not white"
+        si
+    si
+
+    @TestClass()
     class TURTLE_Tests is
         init() is si
 
