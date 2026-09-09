@@ -81,3 +81,21 @@ The unit tests cover the font and the geometry. The integration test draws a
 plot and compares it against `plot.png.expected`, which is the assertion that
 matters: it is the whole picture, and it notices a stroke a fifth of a pixel
 too thin.
+
+## Publishing
+
+The package is published by trusted publishing rather than an API key.
+nuget.org trades a token GitHub signs for this repository and this workflow
+for a key that lasts an hour and is spent once, so there is no long-lived
+secret to leak or rotate.
+
+The policy lives on nuget.org under Trusted Publishing, and names the
+repository owner, the repository, and `cicd.yml` as the workflow file. The
+only secret this repository holds is `NUGET_USER`, the nuget.org profile name
+the token is exchanged against, which is not sensitive but is not worth
+writing into a public workflow either.
+
+A new policy is only provisionally active for seven days: nuget.org pins it to
+the repository and owner ids, and it learns those from the first successful
+publish. If nothing publishes in that window the policy goes quiet until the
+window is restarted, which reads as a broken setup and is not one.
