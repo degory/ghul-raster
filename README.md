@@ -48,6 +48,13 @@ Everything is drawn as a stroke, and coverage is computed from the distance to
 the line segment. Ends and joins are round, and the edges are antialiased.
 `stroke` sets the width in pixels; `colour` sets what is laid down.
 
+## Pixels
+
+`set_pixel` writes a pixel outright and `pixel` reads one back. `blend` lays
+part of the current colour over what is already there, which is what a program
+drawing its own shapes needs to antialias them. A position outside the image is
+ignored by both writers.
+
 ## Text
 
 `text` draws with its baseline at the position given and the height in pixels

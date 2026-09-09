@@ -107,8 +107,11 @@ namespace Raster is
             _pixels[at + 2] = blue
         si
 
-        // Lays `weight` of the current colour over what is already there.
-        _blend(x: int, y: int, weight: double) is
+        // Lays `weight` of the current colour over what is already
+        // there, so a program drawing its own shapes can antialias them
+        // rather than choosing a pixel colour outright. A position off
+        // the image is ignored, as it is for `set_pixel`.
+        blend(x: int, y: int, weight: double) is
             if x < 0 \/ y < 0 \/ x >= width \/ y >= height \/ weight <= 0.0D then
                 return
             fi
@@ -378,7 +381,7 @@ namespace Raster is
                             x0, y0, x1, y1
                         )
 
-                    _blend(x, y, half + 0.5D - away)
+                    blend(x, y, half + 0.5D - away)
                 od
             od
         si
