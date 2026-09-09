@@ -165,6 +165,167 @@ namespace Raster is
             )
         si
 
+        // A line through each point in turn, with the joins rounded the
+        // same way a single stroke's ends are. The shape is left open: to
+        // close it, repeat the first point.
+        line(points: Collections.List[(x: double, y: double)]) is
+            for at in 0..points.count - 1 do
+                line(
+                    points[at].x, points[at].y,
+                    points[at + 1].x, points[at + 1].y
+                )
+            od
+        si
+
+        // How many rows are sampled within each pixel row of a fill. Four
+        // is enough for an edge to read as a straight line rather than as
+        // a staircase, at four times the work of none.
+        _SAMPLES: int static => 4
+
+        // The polygon these points enclose, filled with the current
+        // colour. The last point joins the first, so a shape need not
+        // repeat it, and a boundary crossed twice leaves a hole.
+        fill(points: Collections.List[(x: double, y: double)]) is
+            if points.count < 3 then
+                return
+            fi
+
+            let xs =
+                (0..points.count)
+                    |> map(at => _to_pixel_x(points[at].x, points[at].y))
+                    |> collect_array()
+
+            let ys =
+                (0..points.count)
+                    |> map(at => _to_pixel_y(points[at].x, points[at].y))
+                    |> collect_array()
+
+            let top = _clamp(ys |> reduce(ys[0], _least), 0, height)
+            let bottom = _clamp(ys |> reduce(ys[0], _most) + 1.0D, 0, height)
+
+            let coverage = (0..width) |> map(_ => 0.0D) |> collect_list()
+
+            for y in top..bottom do
+                for x in 0..width do
+                    coverage[x] = 0.0D
+                od
+
+                for sample in 0.._SAMPLES do
+                    let at =
+                        cast double(y) +
+                        (cast double(sample) + 0.5D) / cast double(_SAMPLES)
+
+                    let crossings = _crossings(xs, ys, at)
+
+                    let index mut = 0
+
+                    while index + 1 < crossings.count do
+                        _cover(
+                            coverage, crossings[index], crossings[index + 1]
+                        )
+
+                        index = index + 2
+                    od
+                od
+
+                for x in 0..width do
+                    blend(x, y, coverage[x] / cast double(_SAMPLES))
+                od
+            od
+        si
+
+        _least(a: double, b: double) -> double static =>
+            if a < b then a else b fi
+
+        _most(a: double, b: double) -> double static =>
+            if a > b then a else b fi
+
+        _clamp(value: double, low: int, high: int) -> int static =>
+            (let at = cast int(Math.floor(value))
+
+             if at < low then low elif at > high then high else at fi)
+
+        // Where the outline crosses this row, in order along it. The
+        // pairs between them are what lies inside.
+        _crossings(
+            xs: double[], ys: double[], at: double
+        ) -> Collections.List[double] static is
+            let found = LIST[double]()
+
+            for first in 0..xs.count do
+                let second = (first + 1) % xs.count
+
+                if (ys[first] <= at) != (ys[second] <= at) then
+                    found.add(
+                        xs[first] +
+                        (at - ys[first]) / (ys[second] - ys[first]) *
+                        (xs[second] - xs[first])
+                    )
+                fi
+            od
+
+            found.sort()
+
+            return found
+        si
+
+        // Adds what this span covers of each pixel it touches, so an edge
+        // part way across one counts for part of it.
+        _cover(coverage: LIST[double], from: double, to: double) is
+            let left = if from < 0.0D then 0.0D else from fi
+            let right =
+                if to > cast double(width) then cast double(width) else to fi
+
+            if right <= left then
+                return
+            fi
+
+            for x in cast int(Math.floor(left))..cast int(Math.ceiling(right)) do
+                let within =
+                    _least(right, cast double(x + 1)) -
+                    _most(left, cast double(x))
+
+                if within > 0.0D then
+                    coverage[x] = coverage[x] + within
+                fi
+            od
+        si
+
+        // Every pixel joined to this one and the colour it is, recoloured.
+        // Positions are pixels, as they are for `set_pixel`: the region is
+        // a property of the image rather than of what the view describes.
+        flood_fill(x: int, y: int) is
+            if x < 0 \/ y < 0 \/ x >= width \/ y >= height then
+                return
+            fi
+
+            let start = pixel(x, y)
+
+            if start =~ (red = _red, green = _green, blue = _blue) then
+                return
+            fi
+
+            let pending = Collections.STACK[(x: int, y: int)]()
+
+            pending.push((x = x, y = y))
+
+            while pending.count > 0 do
+                let at = pending.pop()
+
+                if at.x >= 0 /\ at.y >= 0 /\
+                    at.x < width /\ at.y < height /\
+                    pixel(at.x, at.y) =~ start
+                then
+                    set_pixel(at.x, at.y, _red, _green, _blue)
+
+                    pending.push((x = at.x + 1, y = at.y))
+                    pending.push((x = at.x - 1, y = at.y))
+                    pending.push((x = at.x, y = at.y + 1))
+                    pending.push((x = at.x, y = at.y - 1))
+                fi
+            od
+        si
+
         // Names an image this program wrote, at the point in the output
         // where it belongs.
         //
