@@ -55,6 +55,16 @@ part of the current colour over what is already there, which is what a program
 drawing its own shapes needs to antialias them. A position outside the image is
 ignored by both writers.
 
+## A turtle
+
+`TURTLE` is a pen on an image, at a position and a heading, told how far to go
+rather than where to go: `forward`, `turn`, `face`, `move_to`, `pen_up` and
+`pen_down`. A curve stated as a sequence of turns and steps is written that way
+directly.
+
+Angles are in degrees and follow the image's coordinates, so with a `view` set
+a positive turn is counter-clockwise and without one it is the other way about.
+
 ## Text
 
 `text` draws with its baseline at the position given and the height in pixels

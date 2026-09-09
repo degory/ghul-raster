@@ -2,6 +2,7 @@ namespace Raster.Tests is
     use TestClass = Microsoft.VisualStudio.TestTools.UnitTesting.TestClassAttribute
     use Test = Microsoft.VisualStudio.TestTools.UnitTesting.TestMethodAttribute
     use Ghul.Pipes
+    use Math = System.Math
 
     entry()
 
@@ -39,6 +40,73 @@ namespace Raster.Tests is
                 assert stroke.count >= 2 else "a stroke of one point draws nothing"
             od
         si
+    si
+
+    @TestClass()
+    class TURTLE_Tests is
+        init() is si
+
+        @Test()
+        A_turtle_starts_at_the_origin_facing_along_x() is
+            let turtle = TURTLE(IMAGE(10, 10))
+
+            assert turtle.x =~ 0.0D
+            assert turtle.y =~ 0.0D
+            assert turtle.heading =~ 0.0D
+        si
+
+        @Test()
+        Going_forward_moves_the_way_it_is_facing() is
+            let turtle = TURTLE(IMAGE(40, 40))
+
+            turtle.move_to(10.0D, 10.0D)
+            turtle.face(90.0D)
+            turtle.forward(5.0D)
+
+            assert Math.abs(turtle.x - 10.0D) < 0.000001D
+            assert Math.abs(turtle.y - 15.0D) < 0.000001D
+        si
+
+        @Test()
+        Turns_accumulate() is
+            let turtle = TURTLE(IMAGE(10, 10))
+
+            turtle.turn(90.0D)
+            turtle.turn(45.0D)
+
+            assert Math.abs(turtle.heading - 135.0D) < 0.000001D
+        si
+
+        @Test()
+        A_lifted_pen_moves_without_drawing() is
+            let drawn = IMAGE(40, 40)
+            let skipped = IMAGE(40, 40)
+
+            for image in [drawn, skipped] do
+                image.colour(0ub, 0ub, 0ub)
+            od
+
+            let drawing = TURTLE(drawn)
+            let lifted = TURTLE(skipped)
+
+            lifted.pen_up()
+
+            for turtle in [drawing, lifted] do
+                turtle.move_to(5.0D, 20.0D)
+                turtle.forward(30.0D)
+            od
+
+            assert _marked(drawn, 20, 20)
+                else "the drawing turtle left no line"
+            assert !_marked(skipped, 20, 20)
+                else "the lifted turtle drew anyway"
+
+            assert Math.abs(lifted.x - 35.0D) < 0.000001D
+                else "the lifted turtle did not move"
+        si
+
+        _marked(image: IMAGE, x: int, y: int) -> bool =>
+            image.pixel(x, y) !~ (red = 255ub, green = 255ub, blue = 255ub)
     si
 
     @TestClass()
