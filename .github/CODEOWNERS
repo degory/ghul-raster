@@ -1,0 +1,13 @@
+# TODO (when scaffolding from this template): replace @your-github-username
+# below with this repository's owner, then enable branch protection on the
+# default branch with "Require review from Code Owners" + "Required approvals
+# = 0". Only PRs touching these paths then need the owner's review; everything
+# else can auto-merge.
+#
+# Scope is deliberately narrow — NOT a `*` catch-all, which would require
+# code-owner review on every PR. Raising VERSION cuts a minor/major release,
+# so it is gated here; the workflows and CODEOWNERS are gated so the
+# release/versioning machinery can't change unreviewed.
+/VERSION              @your-github-username
+/.github/workflows/   @your-github-username
+/.github/CODEOWNERS   @your-github-username

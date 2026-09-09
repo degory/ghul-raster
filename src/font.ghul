@@ -1,0 +1,111 @@
+namespace Raster is
+    use Collections.LIST
+    use Collections.MAP
+    use Ghul.Pipes
+
+    // A Hershey stroke font: each character is a handful of polylines rather
+    // than an outline to fill, so drawing text is drawing the same strokes
+    // everything else here is drawn with.
+    //
+    // The Hershey Fonts were originally created by Dr. A. V. Hershey while
+    // working at the U. S. National Bureau of Standards. The format of the
+    // font data was originally created by James Hurt, Cognition, Inc. The
+    // terms those fonts are distributed under are in fonts/hershey.txt,
+    // which travels with the data.
+    class GLYPH is
+        left: int
+        right: int
+
+        // Each polyline is drawn stroke by stroke; the pen lifts between one
+        // and the next.
+        strokes: LIST[LIST[(x: int, y: int)]]
+
+        init(left: int, right: int, strokes: LIST[LIST[(x: int, y: int)]]) is
+            self.left = left
+            self.right = right
+            self.strokes = strokes
+        si
+
+        width: int => right - left
+    si
+
+    class FONT is
+        _glyphs: MAP[char, GLYPH]
+
+        // The face's own units. A capital reaches 12 above the baseline, so a
+        // caller asking for a height in pixels is asking about that.
+        CAP_HEIGHT: double static => 12.0D
+
+        init(glyphs: MAP[char, GLYPH]) is
+            _glyphs = glyphs
+        si
+
+        glyph(letter: char) -> GLYPH? =>
+            if _glyphs.contains_key(letter) then _glyphs[letter] else null fi
+
+        // The face the library carries. `FONT_DATA` holds it as source
+        // because the compiler emits no embedded resources, so there is
+        // nothing to find on disk and nothing to ship beside the assembly.
+        simplex: FONT static =>
+            (if !_simplex? then
+                 _simplex = read(FONT_DATA.SIMPLEX)
+             fi
+
+             _simplex)
+
+        _simplex: FONT? static
+
+        // One glyph a line: five characters of number, three of vertex count,
+        // then pairs of characters. Each character is a coordinate offset
+        // from `R`, the first pair is the glyph's left and right edges, and
+        // a space where a coordinate would be lifts the pen.
+        read(data: string) -> FONT static is
+            let glyphs = MAP[char, GLYPH]()
+
+            let at mut = ' '
+
+            for line in data.split(['\n']) do
+                if line.length < 10 then
+                    continue
+                fi
+
+                let body = line.substring(8)
+
+                let left = cast int(body[0]) - cast int('R')
+                let right = cast int(body[1]) - cast int('R')
+
+                let strokes = LIST[LIST[(x: int, y: int)]]()
+                let stroke = LIST[(x: int, y: int)]()
+
+                let index mut = 2
+
+                while index + 1 < body.length do
+                    if body[index] == ' ' then
+                        if stroke.count > 0 then
+                            strokes.add(stroke |> collect_list())
+
+                            stroke.clear()
+                        fi
+                    else
+                        stroke.add(
+                            (x = cast int(body[index]) - cast int('R'),
+                             y = cast int(body[index + 1]) - cast int('R'))
+                        )
+                    fi
+
+                    index = index + 2
+                od
+
+                if stroke.count > 0 then
+                    strokes.add(stroke |> collect_list())
+                fi
+
+                glyphs[at] = GLYPH(left, right, strokes)
+
+                at = cast char(cast int(at) + 1)
+            od
+
+            return FONT(glyphs)
+        si
+    si
+si

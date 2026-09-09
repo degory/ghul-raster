@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+
+    <Title>ghūl raster graphics</Title>
+    <PackageId>Ghul.Raster</PackageId>
+
+    <GhulCompiler>dotnet ghul-compiler</GhulCompiler>
+    <PackageOutputPath>./nupkg</PackageOutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <GhulSources Include="src/**/*.ghul" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,217 @@
+# CI/CD pipeline. 
+
+name: CICD
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number'
+        required: true
+
+  pull_request:
+  push:
+    branches: [master, main]
+
+# Serialise pushes to main so two concurrent merges don't compute the same
+# version number; for pull requests, cancel any superseded run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CI: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: 1
+  DOTNET_CLI_TELEMETRY_OPTOUT: 1
+  DOTNET_NOLOGO: 1
+
+jobs:
+  version:
+    name: Create a version number
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      package: ${{ steps.version.outputs.package }}
+
+    permissions:
+      contents: read
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: '0'
+
+    # Compute the next version: the patch bump of the latest vX.Y.Z tag, unless
+    # the checked-in VERSION file declares a higher minor/major floor. VERSION
+    # is code-owned, so raising it for a non-patch release requires the code
+    # owner's review (a #major/#minor marker can no longer trigger a bump). A
+    # workflow_dispatch `version` input overrides outright; pull request builds
+    # get a -beta.<run> prerelease so they never collide with a real release.
+    - name: Determine the version
+      id: version
+      uses: degory/create-version@v1.0.0
+      with:
+        version: ${{ github.event.inputs.version }}
+        prerelease: ${{ github.event_name == 'pull_request' && format('beta.{0}', github.run_number) || '' }}
+
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+
+    container: 
+      image: mcr.microsoft.com/dotnet/sdk:10.0
+
+    timeout-minutes: 5
+    needs: [version]
+
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Restore local tools
+      run: dotnet tool restore
+
+    - name: Run unit tests
+      run: dotnet test unit-tests
+
+  integration-tests:
+    name: Integration tests
+    runs-on: ubuntu-latest
+
+    container: 
+      image: mcr.microsoft.com/dotnet/sdk:10.0
+
+    timeout-minutes: 5
+    needs: [version]
+
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: .NET tool restore
+      run: dotnet tool restore
+
+    - name: Build
+      run: dotnet build
+
+    - name: Integration tests
+      run: dotnet ghul-test --use-dotnet-build integration-tests
+
+  build:
+    name: Build the package
+    runs-on: ubuntu-latest
+
+    container:
+      image: mcr.microsoft.com/dotnet/sdk:10.0
+
+    timeout-minutes: 10
+    needs: [version]
+
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: .NET tool restore
+      run: dotnet tool restore
+
+    - name: Create package
+      run: dotnet pack -p:Version=${{ needs.version.outputs.package }}
+
+    - name: Upload .NET package artefact
+      uses: actions/upload-artifact@v7
+      with:
+        name: package
+        path: nupkg
+
+  package-tests:
+    name: Test the package
+    runs-on: ubuntu-latest
+
+    container: 
+      image: mcr.microsoft.com/dotnet/sdk:10.0
+
+    timeout-minutes: 10
+    needs: [version,build]
+
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Download template package
+      uses: actions/download-artifact@v8
+      with:
+        name: package
+        path: nupkg
+
+    # TODO: add actual package tests here
+
+  publish-package:
+    name: Publish the package
+    runs-on: ubuntu-latest
+
+    container: 
+      image: mcr.microsoft.com/dotnet/sdk:10.0
+
+    timeout-minutes: 10
+    needs: [build, unit-tests, integration-tests, package-tests]
+
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Download template package
+      uses: actions/download-artifact@v8
+      with:
+        name: package
+        path: nupkg
+
+    - name: |
+        "TODO: configure for your NuGet feeds" 
+      run: |
+        echo "TODO: configure the 'publish package' job in .github/workflows/cicd.yml"
+
+    # TODO: to push the built package to GitHub replace 'your-github-username' with your GitHub
+    # user name and uncomment this step:
+    # - name: Publish package to GitHub
+    #  run: dotnet nuget push ./nupkg/*.nupkg -k ${GITHUB_TOKEN} -s https://nuget.pkg.github.com/your-github-username/index.json --skip-duplicate --no-symbols true
+    #  env:
+    #    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    # Publishing waits on a NUGET_TOKEN secret holding a NuGet.org key. Until
+    # one is added the step is skipped rather than failing, so the rest of the
+    # pipeline runs and the package is still built and attached to the release.
+    - name: Publish package to NuGet
+      if: ${{ github.event_name == 'push' && secrets.NUGET_TOKEN != '' }}
+      run: dotnet nuget push ./nupkg/*.nupkg -k ${NUGET_TOKEN} -s https://api.nuget.org/v3/index.json --skip-duplicate --no-symbols true
+      env:
+        NUGET_TOKEN: ${{ secrets.NUGET_TOKEN }}
+
+  create-release:
+    needs: [version, publish-package]
+    name: Create release
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 5
+    if: ${{ github.event_name == 'push' }}
+
+    permissions:
+      contents: 'write'
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: '0'
+
+    - name: Download package
+      uses: actions/download-artifact@v8
+      with:
+        name: package
+        path: nupkg
+
+    - name: Create changelog
+      run: git log -1 --format="%s%n%n%b%n%n" >changelog.txt
+
+    - name: Create a release
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        gh release create "${{ needs.version.outputs.tag }}" \
+          ./nupkg/Ghul.Raster.${{ needs.version.outputs.package }}.nupkg \
+          --title "${{ needs.version.outputs.tag }}" \
+          --notes-file changelog.txt

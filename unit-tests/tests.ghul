@@ -1,0 +1,172 @@
+namespace Raster.Tests is
+    use TestClass = Microsoft.VisualStudio.TestTools.UnitTesting.TestClassAttribute
+    use Test = Microsoft.VisualStudio.TestTools.UnitTesting.TestMethodAttribute
+    use Ghul.Pipes
+
+    entry()
+
+    @TestClass()
+    class FONT_Tests is
+        init() is si
+
+        @Test()
+        The_simplex_face_covers_printable_ASCII() is
+            let font = FONT.simplex
+
+            for at in 32::126 do
+                assert font.glyph(cast char(at))?
+                    else "no glyph for character {at}"
+            od
+        si
+
+        @Test()
+        A_space_is_blank_but_has_width() is
+            let space = FONT.simplex.glyph(' ')
+
+            assert space?
+            assert space.strokes.count == 0
+            assert space.width > 0
+        si
+
+        @Test()
+        A_letter_is_drawn_from_strokes_of_at_least_two_points() is
+            let letter = FONT.simplex.glyph('A')
+
+            assert letter?
+            assert letter.strokes.count > 0
+
+            for stroke in letter.strokes do
+                assert stroke.count >= 2 else "a stroke of one point draws nothing"
+            od
+        si
+    si
+
+    @TestClass()
+    class IMAGE_Tests is
+        init() is si
+
+        // The pixel an image starts as, so a test can say what changed.
+        _white(image: IMAGE, x: int, y: int) -> bool =>
+            image.pixel(x, y) =~ (red = 255ub, green = 255ub, blue = 255ub)
+
+        @Test()
+        A_new_image_is_white() is
+            let image = IMAGE(4, 3)
+
+            for y in 0..3 do
+                for x in 0..4 do
+                    assert _white(image, x, y) else "{x}, {y} is not white"
+                od
+            od
+        si
+
+        @Test()
+        A_view_puts_the_origin_where_it_says() is
+            let image = IMAGE(100, 100)
+
+            // y increases upwards, so the top of the range is row zero.
+            image.view(0.0D, 0.0D, 10.0D, 10.0D)
+
+            assert image.to_pixel(0.0D, 10.0D) =~ (x = 0.0D, y = 0.0D)
+            assert image.to_pixel(10.0D, 0.0D) =~ (x = 100.0D, y = 100.0D)
+            assert image.to_pixel(5.0D, 5.0D) =~ (x = 50.0D, y = 50.0D)
+        si
+
+        @Test()
+        Without_a_view_a_position_is_already_a_pixel() is
+            let image = IMAGE(20, 20)
+
+            assert image.to_pixel(3.0D, 7.0D) =~ (x = 3.0D, y = 7.0D)
+        si
+
+        @Test()
+        A_stroke_covers_its_own_line_and_stops() is
+            let image = IMAGE(40, 40)
+
+            image.colour(0ub, 0ub, 0ub)
+            image.stroke(2.0D)
+            image.line(5.0D, 20.0D, 35.0D, 20.0D)
+
+            assert !_white(image, 20, 20) else "the line did not draw"
+            assert _white(image, 20, 5) else "ink far above the line"
+            assert _white(image, 20, 35) else "ink far below the line"
+            assert _white(image, 1, 20) else "ink beyond the start"
+        si
+
+        @Test()
+        A_thicker_stroke_covers_more() is
+            let thin = IMAGE(40, 40)
+            let thick = IMAGE(40, 40)
+
+            for image in [thin, thick] do
+                image.colour(0ub, 0ub, 0ub)
+            od
+
+            thin.stroke(1.0D)
+            thick.stroke(5.0D)
+
+            thin.line(5.0D, 20.0D, 35.0D, 20.0D)
+            thick.line(5.0D, 20.0D, 35.0D, 20.0D)
+
+            assert _inked(thick) > _inked(thin)
+                else "a wider stroke marked no more pixels"
+        si
+
+        @Test()
+        A_stroke_is_antialiased() is
+            let image = IMAGE(40, 40)
+
+            image.colour(0ub, 0ub, 0ub)
+            image.stroke(1.0D)
+            image.line(4.0D, 4.0D, 36.0D, 30.0D)
+
+            let blended =
+                (0..40)
+                    |> map(y =>
+                        (0..40)
+                            |> filter(x =>
+                                (let seen = image.pixel(x, y)
+
+                                 seen.red > 0ub /\ seen.red < 255ub))
+                            |> count())
+                    |> reduce(0, (a, b) => a + b)
+
+            assert blended > 0
+                else "every pixel is either white or black, so nothing is blended"
+        si
+
+        _inked(image: IMAGE) -> int =>
+            (0..image.height)
+                |> map(y =>
+                    (0..image.width)
+                        |> filter(x =>
+                            image.pixel(x, y) !~
+                                (red = 255ub, green = 255ub, blue = 255ub))
+                        |> count())
+                |> reduce(0, (a, b) => a + b)
+
+        @Test()
+        Text_is_as_wide_as_it_says_and_grows_with_its_height() is
+            let image = IMAGE(10, 10)
+
+            assert image.text_width(20.0D, "") =~ 0.0D
+
+            let small = image.text_width(10.0D, "sin x")
+            let large = image.text_width(20.0D, "sin x")
+
+            assert small > 0.0D
+            assert large > small
+        si
+
+        @Test()
+        Text_draws_where_it_was_put() is
+            let image = IMAGE(120, 60)
+
+            image.colour(0ub, 0ub, 0ub)
+            image.text(10.0D, 40.0D, 24.0D, "Ag")
+
+            assert _inked(image) > 0 else "nothing was drawn"
+            assert _white(image, 110, 55) else "ink far from the text"
+        si
+    si
+si

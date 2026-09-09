@@ -1,0 +1,372 @@
+namespace Raster is
+    use Collections.LIST
+    use Ghul.Pipes
+    use Math = System.Math
+
+    // A truecolour image, drawn into with strokes and written as a PNG.
+    //
+    // Positions are in whatever coordinates `view` was given, so a program
+    // works in the space its problem is stated in. Sizes are in pixels: a
+    // label is as tall as it is asked to be however the axes are scaled, and
+    // a stroke is as wide as it is asked to be.
+    class IMAGE is
+        width: int
+        height: int
+
+        _pixels: LIST[ubyte]
+
+        // The transform from user coordinates to pixels, as the six numbers
+        // of an affine map. Identity until `view` says otherwise, so a
+        // program that thinks in pixels says nothing.
+        _xx: double
+        _xy: double
+        _yx: double
+        _yy: double
+        _x0: double
+        _y0: double
+
+        _stroke: double
+
+        _red: ubyte
+        _green: ubyte
+        _blue: ubyte
+
+        init(width: int, height: int) is
+            self.width = width
+            self.height = height
+
+            _pixels =
+                (0..width * height * 3) |> map(_ => 255ub) |> collect_list()
+
+            _xx = 1.0D
+            _xy = 0.0D
+            _yx = 0.0D
+            _yy = 1.0D
+            _x0 = 0.0D
+            _y0 = 0.0D
+
+            _stroke = 1.0D
+
+            _red = 0ub
+            _green = 0ub
+            _blue = 0ub
+        si
+
+        // Maps a rectangle of user coordinates onto the whole image, with y
+        // increasing upwards as it does in mathematics rather than downwards
+        // as it does in an image. The rectangle is mapped exactly, so it
+        // stretches where its proportions differ from the image's.
+        view(left: double, bottom: double, right: double, top: double) is
+            _xx = cast double(width) / (right - left)
+            _xy = 0.0D
+            _yx = 0.0D
+            _yy = -cast double(height) / (top - bottom)
+            _x0 = -left * _xx
+            _y0 = cast double(height) - bottom * _yy * -1.0D + bottom * _yy
+
+            _y0 = -top * _yy
+        si
+
+        stroke(width: double) is
+            _stroke = width
+        si
+
+        colour(red: ubyte, green: ubyte, blue: ubyte) is
+            _red = red
+            _green = green
+            _blue = blue
+        si
+
+        _to_pixel_x(x: double, y: double) -> double => _xx * x + _yx * y + _x0
+        _to_pixel_y(x: double, y: double) -> double => _xy * x + _yy * y + _y0
+
+        // Where a position falls on the image, which is what the view
+        // decides. Useful to a caller placing something by hand, and the
+        // only way to see that a view means what it says.
+        to_pixel(x: double, y: double) -> (x: double, y: double) =>
+            (x = _to_pixel_x(x, y), y = _to_pixel_y(x, y))
+
+        // What is at a pixel of the image, in pixels.
+        pixel(x: int, y: int) -> (red: ubyte, green: ubyte, blue: ubyte) =>
+            (let at = (y * width + x) * 3
+
+             (red = _pixels[at],
+              green = _pixels[at + 1],
+              blue = _pixels[at + 2]))
+
+        // A pixel of the image itself, in pixels, whatever the view says.
+        set_pixel(x: int, y: int, red: ubyte, green: ubyte, blue: ubyte) is
+            if x < 0 \/ y < 0 \/ x >= width \/ y >= height then
+                return
+            fi
+
+            let at = (y * width + x) * 3
+
+            _pixels[at] = red
+            _pixels[at + 1] = green
+            _pixels[at + 2] = blue
+        si
+
+        // Lays `weight` of the current colour over what is already there.
+        _blend(x: int, y: int, weight: double) is
+            if x < 0 \/ y < 0 \/ x >= width \/ y >= height \/ weight <= 0.0D then
+                return
+            fi
+
+            let covered = if weight > 1.0D then 1.0D else weight fi
+            let at = (y * width + x) * 3
+
+            _pixels[at] = _mix(_pixels[at], _red, covered)
+            _pixels[at + 1] = _mix(_pixels[at + 1], _green, covered)
+            _pixels[at + 2] = _mix(_pixels[at + 2], _blue, covered)
+        si
+
+        _mix(under: ubyte, over: ubyte, weight: double) -> ubyte =>
+            cast ubyte(
+                cast double(under) * (1.0D - weight) +
+                cast double(over) * weight + 0.5D
+            )
+
+        // How far a point lies from a segment, which is what makes a stroke a
+        // capsule: the ends are round because the distance is measured to the
+        // segment rather than to the line through it, and so are the joins
+        // where one stroke meets the next.
+        _distance(
+            x: double, y: double,
+            x0: double, y0: double,
+            x1: double, y1: double
+        ) -> double =>
+            (let dx = x1 - x0
+             let dy = y1 - y0
+             let square = dx * dx + dy * dy
+
+             let along =
+                 if square <= 0.0D then
+                     0.0D
+                 else
+                     (let t = ((x - x0) * dx + (y - y0) * dy) / square
+
+                      if t < 0.0D then 0.0D elif t > 1.0D then 1.0D else t fi)
+                 fi
+
+             let near_x = x0 + along * dx
+             let near_y = y0 + along * dy
+
+             Math.sqrt((x - near_x) * (x - near_x) + (y - near_y) * (y - near_y)))
+
+        line(x0: double, y0: double, x1: double, y1: double) is
+            _stroke_pixels(
+                _to_pixel_x(x0, y0), _to_pixel_y(x0, y0),
+                _to_pixel_x(x1, y1), _to_pixel_y(x1, y1),
+                _stroke
+            )
+        si
+
+        // Text with its baseline at (x, y) in user coordinates, `height`
+        // pixels from baseline to the top of a capital. The weight follows
+        // the height, since a stroke font carries none of its own.
+        text(x: double, y: double, height: double, letters: string) is
+            text(x, y, height, height / 10.0D, letters)
+        si
+
+        text(
+            x: double,
+            y: double,
+            height: double,
+            weight: double,
+            letters: string
+        ) is
+            let font = FONT.simplex
+            let scale = height / FONT.CAP_HEIGHT
+
+            let pen_x mut = _to_pixel_x(x, y)
+            let pen_y mut = _to_pixel_y(x, y)
+
+            for letter in letters do
+                if let glyph = font.glyph(letter) then
+                    for stroke in glyph.strokes do
+                        for at in 0..stroke.count - 1 do
+                            _stroke_pixels(
+                                pen_x + cast double(stroke[at].x - glyph.left) * scale,
+                                pen_y + cast double(stroke[at].y) * scale,
+                                pen_x + cast double(stroke[at + 1].x - glyph.left) * scale,
+                                pen_y + cast double(stroke[at + 1].y) * scale,
+                                weight
+                            )
+                        od
+                    od
+
+                    pen_x = pen_x + cast double(glyph.width) * scale
+                fi
+            od
+        si
+
+        // How wide that text will be, in pixels, so a caller can place it.
+        text_width(height: double, letters: string) -> double =>
+            (let font = FONT.simplex
+             let scale = height / FONT.CAP_HEIGHT
+
+             let total mut = 0.0D
+
+             for letter in letters do
+                 if let glyph = font.glyph(letter) then
+                     total = total + cast double(glyph.width) * scale
+                 fi
+             od
+
+             total)
+
+        // The image as a PNG: signature, header, one block of image data and
+        // an end marker. Each scanline carries filter byte 0, so what is
+        // compressed is the pixels as they stand.
+        write(path: string) is
+            let out = LIST[ubyte]()
+
+            for value in [137ub, 80ub, 78ub, 71ub, 13ub, 10ub, 26ub, 10ub] do
+                out.add(value)
+            od
+
+            let header = LIST[ubyte]()
+
+            _append_int(header, width)
+            _append_int(header, height)
+
+            for value in [8ub, 2ub, 0ub, 0ub, 0ub] do
+                header.add(value)
+            od
+
+            _append_chunk(out, "IHDR", header |> collect_array())
+            _append_chunk(out, "IDAT", _zlib(_scanlines()))
+            _append_chunk(out, "IEND", [])
+
+            IO.File.write_all_bytes(path, out |> collect_array())
+        si
+
+        _scanlines() -> ubyte[] =>
+            (let raw = LIST[ubyte]()
+
+             for y in 0..height do
+                 raw.add(0ub)
+
+                 for at in y * width * 3 .. (y + 1) * width * 3 do
+                     raw.add(_pixels[at])
+                 od
+             od
+
+             raw |> collect_array())
+
+        _zlib(data: ubyte[]) -> ubyte[] =>
+            (let out = LIST[ubyte]()
+
+             out.add(0x78ub)
+             out.add(0x01ub)
+
+             for value in _deflate(data) do
+                 out.add(value)
+             od
+
+             _append_int(out, _adler32(data))
+
+             out |> collect_array())
+
+        _deflate(data: ubyte[]) -> ubyte[] =>
+            (let buffer = IO.MemoryStream()
+
+             let stream =
+                 System.IO.Compression.DeflateStream(
+                     buffer,
+                     System.IO.Compression.CompressionMode.COMPRESS,
+                     true
+                 )
+
+             stream.write(data, 0, data.count)
+             stream.close()
+
+             buffer.to_array())
+
+        _adler32(data: ubyte[]) -> int =>
+            (let low mut = 1
+             let high mut = 0
+
+             for value in data do
+                 low = (low + cast int(value)) % 65521
+                 high = (high + low) % 65521
+             od
+
+             (high << 16) | low)
+
+        _append_int(out: LIST[ubyte], value: int) is
+            out.add(cast ubyte((value >> 24) & 0xFF))
+            out.add(cast ubyte((value >> 16) & 0xFF))
+            out.add(cast ubyte((value >> 8) & 0xFF))
+            out.add(cast ubyte(value & 0xFF))
+        si
+
+        _append_chunk(out: LIST[ubyte], kind: string, data: ubyte[]) is
+            _append_int(out, data.count)
+
+            let body = LIST[ubyte]()
+
+            for letter in kind do
+                body.add(cast ubyte(letter))
+            od
+
+            for value in data do
+                body.add(value)
+            od
+
+            for value in body do
+                out.add(value)
+            od
+
+            _append_int(out, _crc32(body |> collect_array()))
+        si
+
+        _crc32(data: ubyte[]) -> int =>
+            (let remainder mut = 0xFFFFFFFFu
+
+             for value in data do
+                 remainder = remainder ^ cast uint(value)
+
+                 for _ in 0..8 do
+                     remainder =
+                         if (remainder & 1u) != 0u then
+                             0xEDB88320u ^ (remainder >>> 1)
+                         else
+                             remainder >>> 1
+                         fi
+                 od
+             od
+
+             cast int(remainder ^ 0xFFFFFFFFu))
+
+        // Everything is drawn as strokes, so this is the only place pixels
+        // are touched by a drawing operation.
+        _stroke_pixels(
+            x0: double, y0: double,
+            x1: double, y1: double,
+            weight: double
+        ) is
+            let half = weight / 2.0D
+            let reach = half + 1.0D
+
+            let left = cast int(Math.floor(Math.min(x0, x1) - reach))
+            let right = cast int(Math.ceiling(Math.max(x0, x1) + reach))
+            let top = cast int(Math.floor(Math.min(y0, y1) - reach))
+            let bottom = cast int(Math.ceiling(Math.max(y0, y1) + reach))
+
+            for y in top::bottom do
+                for x in left::right do
+                    let away =
+                        _distance(
+                            cast double(x) + 0.5D,
+                            cast double(y) + 0.5D,
+                            x0, y0, x1, y1
+                        )
+
+                    _blend(x, y, half + 0.5D - away)
+                od
+            od
+        si
+    si
+si

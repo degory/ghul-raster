@@ -1,0 +1,11 @@
+{
+	"image": "mcr.microsoft.com/devcontainers/dotnet:10.0",
+	"containerUser": "vscode",
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"degory.ghul"
+			]
+		}
+	}
+}

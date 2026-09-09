@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "isRoot": true,
+  "tools": {
+    "ghul.compiler": {
+      "version": "54.4.0",
+      "commands": [
+        "ghul-compiler"
+      ],
+      "rollForward": false
+    },
+    "ghul.test": {
+      "version": "3.5.2",
+      "commands": [
+        "ghul-test"
+      ],
+      "rollForward": false
+    }
+  }
+}
