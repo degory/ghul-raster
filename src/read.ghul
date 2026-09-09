@@ -1,0 +1,333 @@
+namespace Raster is
+    use System.Exception
+    use Collections.LIST
+    use Ghul.Pipes
+    use Math = System.Math
+
+    // Reading a PNG back in. Eight bits a channel and not interlaced,
+    // which is what anything writing one for a program to read produces:
+    // grey, truecolour and indexed, each with or without alpha.
+    //
+    // An IMAGE carries no alpha of its own, so a transparent pixel is
+    // composited onto the white an image starts as.
+    partial IMAGE is
+        read(path: string) -> IMAGE static =>
+            decode(IO.File.read_all_bytes(path))
+
+        decode(bytes: ubyte[]) -> IMAGE static is
+            let header = _header(bytes)
+
+            let raw =
+                _unfilter(
+                    _inflate(_data(bytes)),
+                    header.width,
+                    header.height,
+                    header.channels,
+                    header.indexed
+                )
+
+            let image = IMAGE(header.width, header.height)
+
+            let palette = _palette(bytes)
+            let step = if header.indexed then 1 else header.channels fi
+
+            for y in 0..header.height do
+                for x in 0..header.width do
+                    let at = (y * header.width + x) * step
+
+                    let seen =
+                        if header.indexed then
+                            _from_palette(palette, cast int(raw[at]))
+                        else
+                            _from_channels(raw, at, header.channels)
+                        fi
+
+                    image.set_pixel(x, y, seen.red, seen.green, seen.blue)
+                od
+            od
+
+            return image
+        si
+
+        _SIGNATURE: ubyte[] static =>
+            [137ub, 80ub, 78ub, 71ub, 13ub, 10ub, 26ub, 10ub]
+
+        // The colour types, by the number of bytes each pixel takes at a
+        // depth of eight: grey, truecolour, indexed, grey with alpha, and
+        // truecolour with alpha.
+        _channels_for(colour_type: int) -> int static =>
+            case colour_type
+            when 0 then 1
+            when 2 then 3
+            when 3 then 1
+            when 4 then 2
+            when 6 then 4
+            else 0
+            esac
+
+        _be32(bytes: ubyte[], at: int) -> int static =>
+            (cast int(bytes[at]) << 24) |
+            (cast int(bytes[at + 1]) << 16) |
+            (cast int(bytes[at + 2]) << 8) |
+            cast int(bytes[at + 3])
+
+        _kind(bytes: ubyte[], at: int) -> string static =>
+            string(
+                (at + 4..at + 8)
+                    |> map(index => cast char(bytes[index]))
+                    |> collect_array()
+            )
+
+        // Walks the chunks, calling back with the kind of each and where
+        // its data starts and ends.
+        _chunks(
+            bytes: ubyte[],
+            seen: (string, int, int) -> void
+        ) static is
+            if bytes.count < 8 then
+                throw Exception("too short to be a PNG")
+            fi
+
+            for at in 0..8 do
+                if bytes[at] != _SIGNATURE[at] then
+                    throw Exception("does not start with the PNG signature")
+                fi
+            od
+
+            let at mut = 8
+
+            while at + 8 <= bytes.count do
+                let length = _be32(bytes, at)
+                let kind = _kind(bytes, at)
+
+                if at + 12 + length > bytes.count then
+                    throw Exception("chunk {kind} runs past the end")
+                fi
+
+                seen(kind, at + 8, at + 8 + length)
+
+                at = at + 12 + length
+            od
+        si
+
+        _header(
+            bytes: ubyte[]
+        ) -> (width: int, height: int, channels: int, indexed: bool) static is
+            let width mut = 0
+            let height mut = 0
+            let channels mut = 0
+            let indexed mut = false
+            let found mut = false
+
+            _chunks(bytes, (kind, from, to) is
+                if kind =~ "IHDR" then
+                    let colour_type = cast int(bytes[from + 9])
+                    let depth = cast int(bytes[from + 8])
+
+                    if depth != 8 then
+                        throw Exception(
+                            "bit depth {depth} is not read here, only 8"
+                        )
+                    fi
+
+                    channels = _channels_for(colour_type)
+
+                    if channels == 0 then
+                        throw Exception(
+                            "colour type {colour_type} is not read here"
+                        )
+                    fi
+
+                    if cast int(bytes[from + 12]) != 0 then
+                        throw Exception(
+                            "interlaced images are not read here"
+                        )
+                    fi
+
+                    width = _be32(bytes, from)
+                    height = _be32(bytes, from + 4)
+                    indexed = colour_type == 3
+                    found = true
+                fi
+            si)
+
+            if !found then
+                throw Exception("no IHDR chunk")
+            fi
+
+            return (
+                width = width,
+                height = height,
+                channels = channels,
+                indexed = indexed
+            )
+        si
+
+        _data(bytes: ubyte[]) -> ubyte[] static is
+            let compressed = LIST[ubyte]()
+
+            _chunks(bytes, (kind, from, to) is
+                if kind =~ "IDAT" then
+                    for at in from..to do
+                        compressed.add(bytes[at])
+                    od
+                fi
+            si)
+
+            return compressed |> collect_array()
+        si
+
+        _palette(bytes: ubyte[]) -> ubyte[] static is
+            let entries = LIST[ubyte]()
+
+            _chunks(bytes, (kind, from, to) is
+                if kind =~ "PLTE" then
+                    for at in from..to do
+                        entries.add(bytes[at])
+                    od
+                fi
+            si)
+
+            return entries |> collect_array()
+        si
+
+        _from_palette(
+            palette: ubyte[], index: int
+        ) -> (red: ubyte, green: ubyte, blue: ubyte) static =>
+            if index * 3 + 2 >= palette.count then
+                throw Exception("palette entry {index} is not in the palette")
+            else
+                (red = palette[index * 3],
+                 green = palette[index * 3 + 1],
+                 blue = palette[index * 3 + 2])
+            fi
+
+        // White is what an image starts as, so compositing onto it is what
+        // keeps a transparent pixel looking the way it did.
+        _over_white(value: ubyte, alpha: ubyte) -> ubyte static =>
+            cast ubyte(
+                (cast int(value) * cast int(alpha) +
+                 255 * (255 - cast int(alpha))) / 255
+            )
+
+        _from_channels(
+            raw: ubyte[], at: int, channels: int
+        ) -> (red: ubyte, green: ubyte, blue: ubyte) static =>
+            case channels
+            when 1 then
+                (red = raw[at], green = raw[at], blue = raw[at])
+            when 2 then
+                (let grey = _over_white(raw[at], raw[at + 1])
+
+                 (red = grey, green = grey, blue = grey))
+            when 3 then
+                (red = raw[at], green = raw[at + 1], blue = raw[at + 2])
+            else
+                (red = _over_white(raw[at], raw[at + 3]),
+                 green = _over_white(raw[at + 1], raw[at + 3]),
+                 blue = _over_white(raw[at + 2], raw[at + 3]))
+            esac
+
+        // The zlib wrapper is two bytes of header and four of checksum
+        // around a raw deflate stream, which is what DeflateStream reads.
+        _inflate(zlib: ubyte[]) -> ubyte[] static is
+            if zlib.count < 6 then
+                throw Exception("the image data is too short to be a zlib stream")
+            fi
+
+            let source = IO.MemoryStream(zlib, 2, zlib.count - 6)
+
+            let stream =
+                System.IO.Compression.DeflateStream(
+                    source,
+                    System.IO.Compression.CompressionMode.DECOMPRESS
+                )
+
+            let out = IO.MemoryStream()
+
+            stream.copy_to(out)
+
+            return out.to_array()
+        si
+
+        _paeth(left: int, above: int, corner: int) -> int static =>
+            (let estimate = left + above - corner
+
+             let from_left = Math.abs(estimate - left)
+             let from_above = Math.abs(estimate - above)
+             let from_corner = Math.abs(estimate - corner)
+
+             if from_left <= from_above /\ from_left <= from_corner then
+                 left
+             elif from_above <= from_corner then
+                 above
+             else
+                 corner
+             fi)
+
+        // Each scanline carries a filter byte saying how it was written in
+        // terms of the bytes to its left and the line above.
+        _unfilter(
+            raw: ubyte[],
+            width: int,
+            height: int,
+            channels: int,
+            indexed: bool
+        ) -> ubyte[] static is
+            let step = if indexed then 1 else channels fi
+            let stride = width * step
+
+            if raw.count != height * (stride + 1) then
+                throw Exception(
+                    "the image data holds {raw.count} bytes, not the "
+                    "{height * (stride + 1)} its header describes"
+                )
+            fi
+
+            let out = LIST[ubyte]()
+
+            for y in 0..height do
+                let filter = cast int(raw[y * (stride + 1)])
+
+                for x in 0..stride do
+                    let value = cast int(raw[y * (stride + 1) + 1 + x])
+
+                    let left =
+                        if x >= step then
+                            cast int(out[y * stride + x - step])
+                        else
+                            0
+                        fi
+
+                    let above =
+                        if y > 0 then
+                            cast int(out[(y - 1) * stride + x])
+                        else
+                            0
+                        fi
+
+                    let corner =
+                        if x >= step /\ y > 0 then
+                            cast int(out[(y - 1) * stride + x - step])
+                        else
+                            0
+                        fi
+
+                    let restored =
+                        case filter
+                        when 0 then value
+                        when 1 then value + left
+                        when 2 then value + above
+                        when 3 then value + (left + above) / 2
+                        when 4 then value + _paeth(left, above, corner)
+                        else throw Exception("filter {filter} is not a filter")
+                        esac
+
+                    out.add(cast ubyte(restored & 0xFF))
+                od
+            od
+
+            return out |> collect_array()
+        si
+    si
+si
