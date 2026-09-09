@@ -322,6 +322,80 @@ namespace Raster.Tests is
         si
 
         @Test()
+        A_filled_shape_is_solid_inside_and_clear_outside() is
+            let image = IMAGE(60, 60)
+
+            image.colour(0ub, 0ub, 0ub)
+
+            image.fill([
+                (x = 10.0D, y = 10.0D),
+                (x = 50.0D, y = 10.0D),
+                (x = 50.0D, y = 50.0D),
+                (x = 10.0D, y = 50.0D)
+            ])
+
+            assert !_white(image, 30, 30) else "the middle is not filled"
+            assert _white(image, 5, 30) else "ink outside the shape"
+            assert _white(image, 55, 30) else "ink outside the shape"
+        si
+
+        @Test()
+        A_shape_of_fewer_than_three_points_encloses_nothing() is
+            let image = IMAGE(20, 20)
+
+            image.colour(0ub, 0ub, 0ub)
+
+            image.fill([(x = 2.0D, y = 2.0D), (x = 18.0D, y = 18.0D)])
+
+            assert _inked(image) == 0 else "two points enclosed something"
+        si
+
+        @Test()
+        A_line_through_points_joins_each_to_the_next() is
+            let image = IMAGE(60, 60)
+
+            image.colour(0ub, 0ub, 0ub)
+            image.stroke(2.0D)
+
+            image.line([
+                (x = 10.0D, y = 10.0D),
+                (x = 50.0D, y = 10.0D),
+                (x = 50.0D, y = 50.0D)
+            ])
+
+            assert !_white(image, 30, 10) else "the first leg is missing"
+            assert !_white(image, 50, 30) else "the second leg is missing"
+            assert _white(image, 30, 50)
+                else "the shape closed itself, which it should not"
+        si
+
+        @Test()
+        A_flood_fill_stops_at_a_boundary() is
+            let image = IMAGE(40, 40)
+
+            image.colour(0ub, 0ub, 0ub)
+            image.stroke(2.0D)
+
+            image.line([
+                (x = 8.0D, y = 8.0D),
+                (x = 32.0D, y = 8.0D),
+                (x = 32.0D, y = 32.0D),
+                (x = 8.0D, y = 32.0D),
+                (x = 8.0D, y = 8.0D)
+            ])
+
+            image.colour(200ub, 0ub, 0ub)
+
+            image.flood_fill(20, 20)
+
+            assert image.pixel(20, 20) =~
+                (red = 200ub, green = 0ub, blue = 0ub)
+                else "inside was not filled"
+
+            assert _white(image, 2, 2) else "the fill escaped the boundary"
+        si
+
+        @Test()
         Text_is_as_wide_as_it_says_and_grows_with_its_height() is
             let image = IMAGE(10, 10)
 

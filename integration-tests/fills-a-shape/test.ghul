@@ -1,0 +1,32 @@
+use Raster.IMAGE
+
+let image = IMAGE(300, 240)
+
+image.view(0.0D, 0.0D, 300.0D, 240.0D)
+
+image.colour(200ub, 60ub, 60ub)
+
+image.fill([
+    (x = 40.0D, y = 40.0D),
+    (x = 260.0D, y = 60.0D),
+    (x = 150.0D, y = 200.0D)
+])
+
+image.colour(0ub, 0ub, 160ub)
+image.stroke(2.0D)
+
+image.line([
+    (x = 20.0D, y = 20.0D),
+    (x = 280.0D, y = 20.0D),
+    (x = 280.0D, y = 220.0D),
+    (x = 20.0D, y = 220.0D),
+    (x = 20.0D, y = 20.0D)
+])
+
+image.colour(60ub, 160ub, 60ub)
+
+image.flood_fill(150, 10)
+
+image.write("shape.png")
+
+image.show("shape.png")

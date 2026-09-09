@@ -48,6 +48,20 @@ Everything is drawn as a stroke, and coverage is computed from the distance to
 the line segment. Ends and joins are round, and the edges are antialiased.
 `stroke` sets the width in pixels; `colour` sets what is laid down.
 
+## Shapes
+
+`line` takes a sequence of points as well as two, and draws through each in
+turn with the joins rounded the way a single stroke's ends are. It leaves the
+shape open, so to close one, repeat the first point.
+
+`fill` takes the same sequence and fills the polygon it encloses, joining the
+last point to the first. Edges are antialiased by sampling within each row, and
+a boundary crossed twice leaves a hole rather than a second layer.
+
+`flood_fill` recolours every pixel joined to the one it is given and the colour
+that one is. It takes pixels rather than user coordinates, as `set_pixel` does:
+the region is a property of the image rather than of what the view describes.
+
 ## Pixels
 
 `set_pixel` writes a pixel outright and `pixel` reads one back. `blend` lays
