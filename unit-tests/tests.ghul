@@ -1159,4 +1159,233 @@ namespace Raster.Tests is
             assert delays[3] == 3 /\ delays[4] == 100
         si
     si
+
+    @TestClass()
+    class SHAPES_Tests is
+        init() is si
+
+        _square_halves(image: IMAGE, together: bool) is
+            let red = (red = 200ub, green = 40ub, blue = 40ub)
+
+            let first = [(x = 4.0D, y = 4.0D), (x = 36.0D, y = 4.0D), (x = 36.0D, y = 30.0D)]
+            let second = [(x = 4.0D, y = 4.0D), (x = 36.0D, y = 30.0D), (x = 4.0D, y = 30.0D)]
+
+            if together then
+                let shapes = SHAPES()
+
+                shapes.add(first, red)
+                shapes.add(second, red)
+
+                image.fill(shapes)
+            else
+                image.colour(red)
+                image.fill(first)
+                image.fill(second)
+            fi
+        si
+
+        _pale_inside(image: IMAGE) -> int =>
+            (6..34)
+                |> map(x =>
+                    (6..28)
+                        |> filter(y => image.pixel(x, y) !~ (red = 200ub, green = 40ub, blue = 40ub))
+                        |> count())
+                |> reduce(0, (a, b) => a + b)
+
+        @Test()
+        Shapes_filled_apart_leave_a_seam_where_they_meet() is
+            let image = IMAGE(40, 34)
+
+            _square_halves(image, false)
+
+            assert _pale_inside(image) > 0
+                else "no seam, so this test no longer shows what filling together fixes"
+        si
+
+        @Test()
+        Shapes_filled_together_meet_without_a_seam() is
+            let image = IMAGE(40, 34)
+
+            _square_halves(image, true)
+
+            assert _pale_inside(image) == 0 else "{_pale_inside(image)} pale pixels inside"
+        si
+
+        @Test()
+        Shapes_filled_together_keep_their_own_colours() is
+            let image = IMAGE(40, 20)
+
+            let shapes = SHAPES()
+
+            shapes.add([(x = 0.0D, y = 0.0D), (x = 20.0D, y = 0.0D), (x = 20.0D, y = 20.0D), (x = 0.0D, y = 20.0D)], 255ub, 0ub, 0ub)
+            shapes.add([(x = 20.0D, y = 0.0D), (x = 40.0D, y = 0.0D), (x = 40.0D, y = 20.0D), (x = 20.0D, y = 20.0D)], 0ub, 0ub, 255ub)
+
+            image.fill(shapes)
+
+            assert image.pixel(5, 10) =~ (red = 255ub, green = 0ub, blue = 0ub)
+            assert image.pixel(35, 10) =~ (red = 0ub, green = 0ub, blue = 255ub)
+        si
+
+        @Test()
+        A_rectangle_fills_between_its_corners() is
+            let image = IMAGE(20, 20)
+
+            image.colour(0ub, 0ub, 0ub)
+            image.fill_rectangle(5.0D, 5.0D, 15.0D, 12.0D)
+
+            assert image.pixel(10, 8) =~ (red = 0ub, green = 0ub, blue = 0ub)
+            assert image.pixel(10, 14) =~ (red = 255ub, green = 255ub, blue = 255ub)
+        si
+
+        @Test()
+        Clearing_to_a_colour_paints_every_pixel() is
+            let image = IMAGE(7, 5)
+
+            image.clear(10ub, 20ub, 30ub)
+
+            for y in 0..5 do
+                for x in 0..7 do
+                    assert image.pixel(x, y) =~ (red = 10ub, green = 20ub, blue = 30ub)
+                        else "{x}, {y}"
+                od
+            od
+        si
+
+        @Test()
+        A_pixel_can_be_set_to_the_current_colour() is
+            let image = IMAGE(4, 4)
+
+            image.colour(1ub, 2ub, 3ub)
+            image.set_pixel(2, 1)
+
+            assert image.pixel(2, 1) =~ (red = 1ub, green = 2ub, blue = 3ub)
+        si
+    si
+
+    @TestClass()
+    class AXES_FIT_Tests is
+        init() is si
+
+        _columns_inked(image: IMAGE, x: int) -> int =>
+            (0..image.height)
+                |> filter(y => image.pixel(x, y) !~ (red = 255ub, green = 255ub, blue = 255ub))
+                |> count()
+
+        @Test()
+        Fitted_axes_keep_every_label_inside_the_image() is
+            let image = IMAGE(300, 200)
+            let axes = AXES(image)
+
+            axes.x_title = "time"
+            axes.y_title = "height"
+            axes.fit(0.0D, -12500.0D, 10.0D, 2500.0D)
+            axes.draw()
+
+            assert _columns_inked(image, 0) == 0 else "ink in the leftmost column"
+            assert _columns_inked(image, 1) == 0 else "ink in the second column"
+
+            for x in 0..image.width do
+                assert image.pixel(x, image.height - 1) =~ (red = 255ub, green = 255ub, blue = 255ub)
+                    else "ink on the bottom row at {x}"
+            od
+        si
+
+        @Test()
+        A_view_can_have_a_margin_on_each_side() is
+            let image = IMAGE(100, 100)
+
+            image.view(0.0D, 0.0D, 1.0D, 1.0D, (left = 30.0D, bottom = 20.0D, right = 10.0D, top = 5.0D))
+
+            assert image.to_pixel(0.0D, 1.0D) =~ (x = 30.0D, y = 5.0D)
+            assert image.to_pixel(1.0D, 0.0D) =~ (x = 90.0D, y = 80.0D)
+        si
+    si
+
+    @TestClass()
+    class MARKER_Tests is
+        init() is si
+
+        _white(image: IMAGE, x: int, y: int) -> bool =>
+            image.pixel(x, y) =~ (red = 255ub, green = 255ub, blue = 255ub)
+
+        @Test()
+        A_dot_is_round_however_the_view_is_scaled() is
+            let image = IMAGE(100, 100)
+
+            image.view(0.0D, 0.0D, 100000.0D, 360.0D)
+            image.colour(0ub, 0ub, 0ub)
+            image.dot(50000.0D, 180.0D, 5.0D)
+
+            assert !_white(image, 50, 50) else "the middle is not marked"
+            assert !_white(image, 53, 50) /\ !_white(image, 50, 53)
+                else "the dot is not round"
+            assert _white(image, 58, 50) /\ _white(image, 50, 58)
+                else "the dot is bigger than its radius"
+        si
+
+        @Test()
+        A_ring_leaves_its_middle() is
+            let image = IMAGE(40, 40)
+
+            image.colour(0ub, 0ub, 0ub)
+            image.ring(20.0D, 20.0D, 8.0D)
+
+            assert _white(image, 20, 20) else "the middle is marked"
+            assert !_white(image, 28, 20) else "the ring is missing"
+        si
+    si
+
+    @TestClass()
+    class AXES_TICKS_Tests is
+        init() is si
+
+        @Test()
+        Given_ticks_replace_the_round_numbers() is
+            let plain = IMAGE(200, 150)
+            let given = IMAGE(200, 150)
+
+            for image in [plain, given] do
+                image.view(0.5D, 0.0D, 9.5D, 10.0D, 30.0D)
+            od
+
+            AXES(plain).draw()
+
+            let axes = AXES(given)
+
+            axes.x_ticks((1::9) |> map(digit => (value = cast double(digit), label = "{digit}")) |> collect_list())
+            axes.draw()
+
+            let differs =
+                (0..200)
+                    |> filter(x => (120..150) |> filter(y => plain.pixel(x, y) !~ given.pixel(x, y)) |> count() > 0)
+                    |> count()
+
+            assert differs > 0 else "the given ticks changed nothing below the frame"
+        si
+
+        @Test()
+        A_key_shows_a_swatch_of_its_colour() is
+            let image = IMAGE(200, 150)
+
+            image.view(0.0D, 0.0D, 1.0D, 1.0D, 30.0D)
+
+            let axes = AXES(image)
+
+            axes.key("found", 200ub, 30ub, 30ub)
+            axes.draw()
+
+            let swatches =
+                (0..200)
+                    |> filter(x =>
+                        (0..150)
+                            |> filter(y => image.pixel(x, y) =~ (red = 200ub, green = 30ub, blue = 30ub))
+                            |> count() > 0)
+                    |> count()
+
+            assert swatches > 4 else "no swatch in the key's colour"
+
+            assert image.current_colour =~ (red = 0ub, green = 0ub, blue = 0ub)
+                else "drawing the key left the colour changed"
+        si
+    si
 si

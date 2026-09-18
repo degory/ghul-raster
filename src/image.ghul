@@ -70,6 +70,21 @@ namespace Raster is
             view(left, bottom, right, top, 0.0D)
         si
 
+        // The same, with a margin of its own on each side, in pixels.
+        view(
+            left: double, bottom: double, right: double, top: double,
+            margins: (left: double, bottom: double, right: double, top: double)
+        ) is
+            _xx = (cast double(width) - margins.left - margins.right) / (right - left)
+            _xy = 0.0D
+            _yx = 0.0D
+            _yy = -(cast double(height) - margins.bottom - margins.top) / (top - bottom)
+            _x0 = margins.left - left * _xx
+            _y0 = margins.top - top * _yy
+
+            _bounds = (left = left, bottom = bottom, right = right, top = top)
+        si
+
         // The same, onto the image less `margin` pixels on every side, which
         // leaves room outside the rectangle for axes and their labels.
         view(
@@ -102,6 +117,10 @@ namespace Raster is
             _green = green
             _blue = blue
         si
+
+        // The colour being drawn with.
+        current_colour: (red: ubyte, green: ubyte, blue: ubyte) =>
+            (red = _red, green = _green, blue = _blue)
 
         // A colour as a colour map gives it.
         colour(rgb: (red: ubyte, green: ubyte, blue: ubyte)) is
@@ -140,6 +159,28 @@ namespace Raster is
             System.Runtime.InteropServices.CollectionsMarshal
                 .as_span(_pixels)
                 .fill(255ub)
+        si
+
+        // Every pixel set to one colour, for painting a background.
+        clear(red: ubyte, green: ubyte, blue: ubyte) is
+            let row = System.GC.allocate_array[ubyte](width * 3, false)
+
+            for x in 0..width do
+                System.MemoryExtensions.as_span(row, x * 3, 3).fill(red)
+                System.MemoryExtensions.as_span(row, x * 3 + 1, 2).fill(green)
+                System.MemoryExtensions.as_span(row, x * 3 + 2, 1).fill(blue)
+            od
+
+            let pixels = System.Runtime.InteropServices.CollectionsMarshal.as_span(_pixels)
+
+            for y in 0..height do
+                System.MemoryExtensions.as_span(row).copy_to(pixels.slice(y * width * 3))
+            od
+        si
+
+        // A pixel set to the current colour outright.
+        set_pixel(x: int, y: int) is
+            set_pixel(x, y, _red, _green, _blue)
         si
 
         // A pixel of the image itself, in pixels, whatever the view says.

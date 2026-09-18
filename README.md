@@ -68,6 +68,17 @@ goes counter-clockwise from its first angle to its second, in degrees from the
 x axis, so 270 to 90 is the right half. A view that scales x and y differently
 draws each of them as an ellipse, as it would any other shape.
 
+`dot` and `ring` mark a point in user coordinates with a radius in pixels, so
+they stay round on a view that scales x and y differently: the marker for a
+point on a plot. `fill_rectangle` fills between two corners.
+
+Shapes filled one at a time each only partly cover the pixels along an edge
+they share, so the background shows through as a pale seam between them.
+`SHAPES` collects polygons, each with its own colour, and `fill` given a
+`SHAPES` fills them together, adding up what each covers of a pixel first, so
+a tiling or a row of bars meets without a seam. Where shapes overlap, their
+colours mix.
+
 `flood_fill` recolours every pixel joined to the one it is given and the colour
 that one is. It takes pixels rather than user coordinates, as `set_pixel` does:
 the region is a property of the image rather than of what the view describes.
@@ -97,12 +108,34 @@ axes.x_title = "n"
 axes.draw()
 ```
 
+`fit` sets the view itself, with each margin sized to what `draw` will put
+there, so a long or negative label is never cut off:
+
+```ghul
+let axes = AXES(image)
+
+axes.y_title = "height"
+axes.fit(0.0D, -12500.0D, 10.0D, 2500.0D)
+axes.draw()
+```
+
+`x_ticks` and `y_ticks` put ticks at given values with given labels in place
+of round numbers, one for each category of a bar chart, say. `key` adds a row
+to a key in the top right corner inside the frame: a swatch of a colour and a
+label.
+
+Text widths are in pixels; `to_user` turns a pixel position into user
+coordinates for placing anything else by them.
+
 The scales are linear.
 
 ## Pixels
 
 `clear` sets every pixel back to white, so a program drawing frame after frame
 can reuse one image rather than allocating another for each.
+
+`clear` can also paint every pixel one colour, for a background. `set_pixel`
+with no colour writes the current one.
 
 `set_pixel` writes a pixel outright and `pixel` reads one back. `blend` lays
 part of the current colour over what is already there, which is what a program
