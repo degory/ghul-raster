@@ -45,6 +45,13 @@ namespace Raster is
             _x0 = 0.0D
             _y0 = 0.0D
 
+            _bounds = (
+                left = 0.0D,
+                bottom = cast double(height),
+                right = cast double(width),
+                top = 0.0D
+            )
+
             _stroke = 1.0D
 
             _red = 0ub
@@ -57,15 +64,31 @@ namespace Raster is
         // as it does in an image. The rectangle is mapped exactly, so it
         // stretches where its proportions differ from the image's.
         view(left: double, bottom: double, right: double, top: double) is
-            _xx = cast double(width) / (right - left)
+            view(left, bottom, right, top, 0.0D)
+        si
+
+        // The same, onto the image less `margin` pixels on every side, which
+        // leaves room outside the rectangle for axes and their labels.
+        view(
+            left: double, bottom: double, right: double, top: double,
+            margin: double
+        ) is
+            _xx = (cast double(width) - 2.0D * margin) / (right - left)
             _xy = 0.0D
             _yx = 0.0D
-            _yy = -cast double(height) / (top - bottom)
-            _x0 = -left * _xx
-            _y0 = cast double(height) - bottom * _yy * -1.0D + bottom * _yy
+            _yy = -(cast double(height) - 2.0D * margin) / (top - bottom)
+            _x0 = margin - left * _xx
+            _y0 = margin - top * _yy
 
-            _y0 = -top * _yy
+            _bounds = (left = left, bottom = bottom, right = right, top = top)
         si
+
+        // The rectangle the last `view` was given. Without one, it is the
+        // image itself, in pixels, with its top at row zero.
+        bounds: (left: double, bottom: double, right: double, top: double) =>
+            _bounds
+
+        _bounds: (left: double, bottom: double, right: double, top: double)
 
         stroke(width: double) is
             _stroke = width
@@ -77,6 +100,11 @@ namespace Raster is
             _blue = blue
         si
 
+        // A colour as a colour map gives it.
+        colour(rgb: (red: ubyte, green: ubyte, blue: ubyte)) is
+            colour(rgb.red, rgb.green, rgb.blue)
+        si
+
         _to_pixel_x(x: double, y: double) -> double => _xx * x + _yx * y + _x0
         _to_pixel_y(x: double, y: double) -> double => _xy * x + _yy * y + _y0
 
@@ -85,6 +113,15 @@ namespace Raster is
         // only way to see that a view means what it says.
         to_pixel(x: double, y: double) -> (x: double, y: double) =>
             (x = _to_pixel_x(x, y), y = _to_pixel_y(x, y))
+
+        // The position a pixel shows, which undoes `to_pixel`.
+        to_user(x: double, y: double) -> (x: double, y: double) =>
+            (let determinant = _xx * _yy - _xy * _yx
+             let px = x - _x0
+             let py = y - _y0
+
+             (x = (_yy * px - _yx * py) / determinant,
+              y = (_xx * py - _xy * px) / determinant))
 
         // What is at a pixel of the image, in pixels.
         pixel(x: int, y: int) -> (red: ubyte, green: ubyte, blue: ubyte) =>
@@ -354,30 +391,105 @@ namespace Raster is
             weight: double,
             letters: string
         ) is
+            text(x, y, height, weight, letters, Anchor.LEFT)
+        si
+
+        // Text whose baseline starts, is centred, or ends at (x, y), as
+        // `anchor` says.
+        text(
+            x: double,
+            y: double,
+            height: double,
+            letters: string,
+            anchor: Anchor
+        ) is
+            text(x, y, height, height / 10.0D, letters, anchor)
+        si
+
+        text(
+            x: double,
+            y: double,
+            height: double,
+            weight: double,
+            letters: string,
+            anchor: Anchor
+        ) is
+            _letters(
+                _to_pixel_x(x, y), _to_pixel_y(x, y),
+                height, weight, letters, anchor, false
+            )
+        si
+
+        // Text reading upwards, turned a quarter counter-clockwise, as a
+        // label beside a vertical axis is. Its baseline runs through (x, y)
+        // with the tops of the letters to the left of it.
+        upward_text(
+            x: double,
+            y: double,
+            height: double,
+            letters: string,
+            anchor: Anchor
+        ) is
+            _letters(
+                _to_pixel_x(x, y), _to_pixel_y(x, y),
+                height, height / 10.0D, letters, anchor, true
+            )
+        si
+
+        _letters(
+            x: double,
+            y: double,
+            height: double,
+            weight: double,
+            letters: string,
+            anchor: Anchor,
+            upward: bool
+        ) is
             let font = FONT.simplex
             let scale = height / FONT.CAP_HEIGHT
 
-            let pen_x mut = _to_pixel_x(x, y)
-            let pen_y mut = _to_pixel_y(x, y)
+            let along mut =
+                case anchor
+                when Anchor.LEFT then 0.0D
+                when Anchor.CENTRE then -text_width(height, letters) / 2.0D
+                when Anchor.RIGHT then -text_width(height, letters)
+                esac
 
             for letter in letters do
                 if let glyph = font.glyph(letter) then
                     for stroke in glyph.strokes do
                         for at in 0..stroke.count - 1 do
-                            _stroke_pixels(
-                                pen_x + cast double(stroke[at].x - glyph.left) * scale,
-                                pen_y + cast double(stroke[at].y) * scale,
-                                pen_x + cast double(stroke[at + 1].x - glyph.left) * scale,
-                                pen_y + cast double(stroke[at + 1].y) * scale,
-                                weight
+                            let from = _place(
+                                x, y, upward,
+                                along + cast double(stroke[at].x - glyph.left) * scale,
+                                (cast double(stroke[at].y) - FONT.BASELINE) * scale
                             )
+
+                            let to = _place(
+                                x, y, upward,
+                                along + cast double(stroke[at + 1].x - glyph.left) * scale,
+                                (cast double(stroke[at + 1].y) - FONT.BASELINE) * scale
+                            )
+
+                            _stroke_pixels(from.x, from.y, to.x, to.y, weight)
                         od
                     od
 
-                    pen_x = pen_x + cast double(glyph.width) * scale
+                    along = along + cast double(glyph.width) * scale
                 fi
             od
         si
+
+        // Where a point of a letter lands, given how far it is along the
+        // baseline and how far below it.
+        _place(
+            x: double, y: double, upward: bool, along: double, below: double
+        ) -> (x: double, y: double) static =>
+            if upward then
+                (x = x + below, y = y - along)
+            else
+                (x = x + along, y = y + below)
+            fi
 
         // How wide that text will be, in pixels, so a caller can place it.
         text_width(height: double, letters: string) -> double =>

@@ -38,6 +38,10 @@ comes out an ellipse. Choose proportions that match, or accept the stretch.
 
 Without a `view`, positions are already pixels.
 
+Given a fifth number, `view` maps the rectangle onto the image less that many
+pixels on every side, which leaves room outside it for axes. `bounds` is the
+rectangle the last `view` was given, and `to_user` undoes `to_pixel`.
+
 Sizes are always in pixels, whatever the view. A label is as tall as it is
 asked to be and a stroke as wide, because a label that stretched with the
 axes would be unreadable on any plot whose axes differ in scale.
@@ -58,9 +62,42 @@ shape open, so to close one, repeat the first point.
 last point to the first. Edges are antialiased by sampling within each row, and
 a boundary crossed twice leaves a hole rather than a second layer.
 
+`circle`, `disc` and `arc` take a centre and a radius in user coordinates.
+`disc` is filled; the other two are strokes, antialiased the same way. An arc
+goes counter-clockwise from its first angle to its second, in degrees from the
+x axis, so 270 to 90 is the right half. A view that scales x and y differently
+draws each of them as an ellipse, as it would any other shape.
+
 `flood_fill` recolours every pixel joined to the one it is given and the colour
 that one is. It takes pixels rather than user coordinates, as `set_pixel` does:
 the region is a property of the image rather than of what the view describes.
+
+## Colour maps
+
+`COLOUR_MAP` turns a number from 0 to 1 into a colour, and `colour` accepts what
+it gives back, so a heat map is `image.colour(COLOUR_MAP.viridis(value))` for
+each cell. `viridis` runs dark to light for a value that only grows;
+`cool_warm` runs blue through grey to red for one either side of a middle at
+0.5; `hue` goes once round the colour wheel for one that wraps, and wraps with
+it. The first two clamp a value beyond either end.
+
+## Axes
+
+`AXES` draws a frame round the rectangle the view was given, with ticks at round
+numbers along the bottom and left, each labelled, and a title for either axis if
+`x_title` or `y_title` is set. It draws outside the rectangle, in the current
+colour and stroke, so give the view a margin:
+
+```ghul
+image.view(0.0D, -1.0D, 10.0D, 6.0D, 50.0D)
+
+let axes = AXES(image)
+
+axes.x_title = "n"
+axes.draw()
+```
+
+The scales are linear.
 
 ## Pixels
 
@@ -90,7 +127,9 @@ a positive turn is counter-clockwise and without one it is the other way about.
 ## Text
 
 `text` draws with its baseline at the position given and the height in pixels
-from baseline to the top of a capital. `text_width` says how wide that text
+from baseline to the top of a capital. An `Anchor` says whether the text starts,
+is centred, or ends at its position, and `upward_text` reads bottom to top, as a
+label beside a vertical axis does. `text_width` says how wide that text
 will be, for placing it. The weight follows the height unless it is given.
 
 The face is a Hershey stroke font, so text is drawn with the same strokes as

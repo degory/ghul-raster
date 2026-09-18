@@ -1,0 +1,130 @@
+namespace Raster is
+    use Math = System.Math
+
+    // Circles, discs and arcs, centred and sized in user coordinates. A view
+    // that scales x and y differently draws each of them as an ellipse, as it
+    // does any other shape.
+    partial IMAGE is
+        circle(x: double, y: double, radius: double) is
+            _round(x, y, radius, 0.0D, 360.0D, false)
+        si
+
+        // The circle filled with the current colour.
+        disc(x: double, y: double, radius: double) is
+            _round(x, y, radius, 0.0D, 360.0D, true)
+        si
+
+        // The part of the circle from one angle to another, going
+        // counter-clockwise, with round ends like a stroke's. Angles are in
+        // degrees from the x axis in user coordinates, so 270 to 90 is the
+        // right half and 90 to 270 the left. A span of a full turn or more is
+        // the whole circle.
+        arc(x: double, y: double, radius: double, from: double, to: double) is
+            _round(x, y, radius, from, to, false)
+        si
+
+        _round(
+            x: double, y: double, radius: double,
+            from: double, to: double,
+            filled: bool
+        ) is
+            if radius <= 0.0D then
+                return
+            fi
+
+            let low = from
+            let span =
+                if Math.abs(to - from) >= 360.0D then
+                    360.0D
+                else
+                    (to - from) - 360.0D * Math.floor((to - from) / 360.0D)
+                fi
+
+            let cx = _to_pixel_x(x, y)
+            let cy = _to_pixel_y(x, y)
+
+            let across = radius * Math.sqrt(_xx * _xx + _xy * _xy)
+            let down = radius * Math.sqrt(_yx * _yx + _yy * _yy)
+
+            let half = _stroke / 2.0D
+            let reach = if filled then 1.0D else half + 1.0D fi
+
+            let first = _arc_end(x, y, radius, low)
+            let last = _arc_end(x, y, radius, low + span)
+
+            for py in cast int(Math.floor(cy - down - reach))::cast int(Math.ceiling(cy + down + reach)) do
+                for px in cast int(Math.floor(cx - across - reach))::cast int(Math.ceiling(cx + across + reach)) do
+                    let edge =
+                        _edge_distance(
+                            cast double(px) + 0.5D - cx,
+                            cast double(py) + 0.5D - cy,
+                            radius
+                        )
+
+                    if filled then
+                        blend(px, py, 0.5D - edge.signed)
+                    else
+                        let away =
+                            if span >= 360.0D \/ _within(edge.angle, low, span) then
+                                Math.abs(edge.signed)
+                            else
+                                _least(
+                                    _point_distance(px, py, first),
+                                    _point_distance(px, py, last)
+                                )
+                            fi
+
+                        blend(px, py, half + 0.5D - away)
+                    fi
+                od
+            od
+        si
+
+        // How far an offset from the centre lies outside the edge, in
+        // pixels and negative inside, and the angle it lies at in user
+        // coordinates. The distance is exact for a circle and a close
+        // estimate for an ellipse, which is all antialiasing asks of it.
+        _edge_distance(
+            dx: double, dy: double, radius: double
+        ) -> (signed: double, angle: double) =>
+            (let determinant = _xx * _yy - _xy * _yx
+
+             let ux = (_yy * dx - _yx * dy) / determinant / radius
+             let uy = (_xx * dy - _xy * dx) / determinant / radius
+
+             let f = Math.sqrt(ux * ux + uy * uy)
+
+             if f < 0.000000001D then
+                 (signed = -radius * Math.abs(_xx), angle = 0.0D)
+             else
+                 (let gx = (_yy * ux - _xy * uy) / determinant / (radius * f)
+                  let gy = (_xx * uy - _yx * ux) / determinant / (radius * f)
+
+                  (signed = (f - 1.0D) / Math.sqrt(gx * gx + gy * gy),
+                   angle = Math.atan2(uy, ux) * 180.0D / Math.pi))
+             fi)
+
+        _within(angle: double, low: double, span: double) -> bool static =>
+            (let past = angle - low
+
+             past - 360.0D * Math.floor(past / 360.0D) <= span)
+
+        _arc_end(
+            x: double, y: double, radius: double, degrees: double
+        ) -> (x: double, y: double) =>
+            (let turned = degrees * Math.pi / 180.0D
+
+             to_pixel(
+                 x + radius * Math.cos(turned),
+                 y + radius * Math.sin(turned)
+             ))
+
+        _point_distance(
+            px: int, py: int, point: (x: double, y: double)
+        ) -> double static =>
+            (let dx = cast double(px) + 0.5D - point.x
+             let dy = cast double(py) + 0.5D - point.y
+
+             Math.sqrt(dx * dx + dy * dy))
+    si
+si

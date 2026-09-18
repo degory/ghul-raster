@@ -1,0 +1,183 @@
+namespace Raster is
+    use Collections.LIST
+    use Ghul.Pipes
+    use Math = System.Math
+
+    // A frame round the rectangle an image's view was given, with ticks at
+    // round numbers along the bottom and left edges, each labelled, and a
+    // title for either axis if it has one. Drawn in the image's current
+    // colour and stroke, outside the rectangle, so a view given a margin
+    // leaves room for it.
+    class AXES is
+        _image: IMAGE
+
+        // Pixels from baseline to the top of a capital, for the labels and
+        // the titles alike.
+        label_height: double public
+
+        // How far each tick reaches out from the frame, in pixels.
+        tick_length: double public
+
+        // Written beneath the numbers on the bottom axis, and beside the
+        // numbers on the left axis reading upwards. Nothing is written for
+        // an empty title.
+        x_title: string public
+        y_title: string public
+
+        init(image: IMAGE) is
+            _image = image
+
+            label_height = 12.0D
+            tick_length = 5.0D
+
+            x_title = ""
+            y_title = ""
+        si
+
+        draw() is
+            let bounds = _image.bounds
+
+            let low_x = Math.min(bounds.left, bounds.right)
+            let high_x = Math.max(bounds.left, bounds.right)
+            let low_y = Math.min(bounds.bottom, bounds.top)
+            let high_y = Math.max(bounds.bottom, bounds.top)
+
+            let corner = _image.to_pixel(bounds.left, bounds.bottom)
+            let opposite = _image.to_pixel(bounds.right, bounds.top)
+
+            let left = Math.min(corner.x, opposite.x)
+            let right = Math.max(corner.x, opposite.x)
+            let top = Math.min(corner.y, opposite.y)
+            let bottom = Math.max(corner.y, opposite.y)
+
+            _line(left, top, right, top)
+            _line(right, top, right, bottom)
+            _line(right, bottom, left, bottom)
+            _line(left, bottom, left, top)
+
+            let gap = label_height / 2.0D
+
+            let across = ticks(low_x, high_x, _most(right - left, 80.0D))
+
+            for value in across do
+                let x = _image.to_pixel(value, bounds.bottom).x
+
+                _line(x, bottom, x, bottom + tick_length)
+
+                _image.text(
+                    _user(x, bottom + tick_length + gap + label_height).x,
+                    _user(x, bottom + tick_length + gap + label_height).y,
+                    label_height,
+                    label(value, across),
+                    Anchor.CENTRE
+                )
+            od
+
+            let up = ticks(low_y, high_y, _most(bottom - top, 50.0D))
+
+            let widest mut = 0.0D
+
+            for value in up do
+                let y = _image.to_pixel(bounds.left, value).y
+                let text = label(value, up)
+
+                _line(left, y, left - tick_length, y)
+
+                let at = _user(left - tick_length - gap, y + label_height / 2.0D)
+
+                _image.text(at.x, at.y, label_height, text, Anchor.RIGHT)
+
+                widest = Math.max(widest, _image.text_width(label_height, text))
+            od
+
+            if x_title.length > 0 then
+                let at =
+                    _user(
+                        (left + right) / 2.0D,
+                        bottom + tick_length + 2.0D * (gap + label_height)
+                    )
+
+                _image.text(at.x, at.y, label_height, x_title, Anchor.CENTRE)
+            fi
+
+            if y_title.length > 0 then
+                let at =
+                    _user(
+                        left - tick_length - 2.0D * gap - widest,
+                        (top + bottom) / 2.0D
+                    )
+
+                _image.upward_text(
+                    at.x, at.y, label_height, y_title, Anchor.CENTRE
+                )
+            fi
+        si
+
+        // Round numbers from `low` to `high` inclusive, one, two or five
+        // times a power of ten apart, as many as fit without exceeding
+        // `most` gaps.
+        ticks(low: double, high: double, most: int) -> double[] static is
+            if !(high > low) \/ most < 1 then
+                return [low]
+            fi
+
+            let spacing = step(low, high, most)
+            let first = cast int(Math.ceiling(low / spacing - 0.000001D))
+            let last = cast int(Math.floor(high / spacing + 0.000001D))
+
+            let found = LIST[double]()
+
+            for index in first::last do
+                found.add(cast double(index) * spacing)
+            od
+
+            return found |> collect_array()
+        si
+
+        // The distance between ticks that `ticks` chooses.
+        step(low: double, high: double, most: int) -> double static =>
+            (let rough = (high - low) / cast double(most)
+             let power = Math.pow(10.0D, Math.floor(Math.log10(rough)))
+             let scaled = rough / power
+
+             if scaled <= 1.0D then
+                 power
+             elif scaled <= 2.0D then
+                 2.0D * power
+             elif scaled <= 5.0D then
+                 5.0D * power
+             else
+                 10.0D * power
+             fi)
+
+        // A tick's value written with as many decimal places as the step
+        // between ticks needs and no more.
+        label(value: double, ticks: double[]) -> string static =>
+            (let step =
+                 if ticks.count > 1 then ticks[1] - ticks[0] else 1.0D fi
+
+             let places =
+                 Math.max(0, cast int(-Math.floor(Math.log10(step) + 0.000001D)))
+
+             let shown =
+                 if Math.abs(value) < step * 0.000001D then 0.0D else value fi
+
+             shown.to_string(
+                 "F{places}",
+                 System.Globalization.CultureInfo.invariant_culture
+             ))
+
+        _most(pixels: double, spacing: double) -> int static =>
+            Math.max(2, cast int(pixels / spacing))
+
+        _user(x: double, y: double) -> (x: double, y: double) =>
+            _image.to_user(x, y)
+
+        _line(x0: double, y0: double, x1: double, y1: double) is
+            let from = _user(x0, y0)
+            let to = _user(x1, y1)
+
+            _image.line(from.x, from.y, to.x, to.y)
+        si
+    si
+si
