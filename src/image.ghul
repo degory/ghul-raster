@@ -35,8 +35,11 @@ namespace Raster is
             self.width = width
             self.height = height
 
-            _pixels =
-                (0..width * height * 3) |> map(_ => 255ub) |> collect_list()
+            let white = System.GC.allocate_array[ubyte](width * height * 3, false)
+
+            System.Array.fill(white, 255ub)
+
+            _pixels = LIST[ubyte](white)
 
             _xx = 1.0D
             _xy = 0.0D
@@ -130,6 +133,14 @@ namespace Raster is
              (red = _pixels[at],
               green = _pixels[at + 1],
               blue = _pixels[at + 2]))
+
+        // Every pixel back to white, as a new image starts, so one image can
+        // be drawn again frame after frame without allocating another.
+        clear() is
+            System.Runtime.InteropServices.CollectionsMarshal
+                .as_span(_pixels)
+                .fill(255ub)
+        si
 
         // A pixel of the image itself, in pixels, whatever the view says.
         set_pixel(x: int, y: int, red: ubyte, green: ubyte, blue: ubyte) is
@@ -243,9 +254,10 @@ namespace Raster is
             let coverage = (0..width) |> map(_ => 0.0D) |> collect_list()
 
             for y in top..bottom do
-                for x in 0..width do
-                    coverage[x] = 0.0D
-                od
+                // Only the columns between the outermost crossings can be
+                // covered, so only those are cleared and blended.
+                let first mut = width
+                let last mut = 0
 
                 for sample in 0.._SAMPLES do
                     let at =
@@ -253,6 +265,11 @@ namespace Raster is
                         (cast double(sample) + 0.5D) / cast double(_SAMPLES)
 
                     let crossings = _crossings(xs, ys, at)
+
+                    if crossings.count >= 2 then
+                        first = Math.min(first, _clamp(crossings[0], 0, width))
+                        last = Math.max(last, _clamp(crossings[crossings.count - 1] + 1.0D, 0, width))
+                    fi
 
                     let index mut = 0
 
@@ -265,8 +282,10 @@ namespace Raster is
                     od
                 od
 
-                for x in 0..width do
+                for x in first..last do
                     blend(x, y, coverage[x] / cast double(_SAMPLES))
+
+                    coverage[x] = 0.0D
                 od
             od
         si
@@ -510,61 +529,49 @@ namespace Raster is
         // an end marker. Each scanline carries filter byte 0, so what is
         // compressed is the pixels as they stand.
         write(path: string) is
-            let out = LIST[ubyte]()
-
-            for value in [137ub, 80ub, 78ub, 71ub, 13ub, 10ub, 26ub, 10ub] do
-                out.add(value)
-            od
-
-            let header = LIST[ubyte]()
-
-            _append_int(header, width)
-            _append_int(header, height)
-
-            for value in [8ub, 2ub, 0ub, 0ub, 0ub] do
-                header.add(value)
-            od
-
-            _append_chunk(out, "IHDR", header |> collect_array())
-            _append_chunk(out, "IDAT", _zlib(_scanlines()))
-            _append_chunk(out, "IEND", [])
-
-            IO.File.write_all_bytes(path, out |> collect_array())
+            IO.File.write_all_bytes(path, encode())
         si
 
+        // The bytes `write` would put in a file, for a caller with somewhere
+        // else to send them.
+        encode() -> ubyte[] =>
+            (let out = IO.MemoryStream()
+
+             out.write([137ub, 80ub, 78ub, 71ub, 13ub, 10ub, 26ub, 10ub], 0, 8)
+
+             let header = IO.MemoryStream()
+
+             _write_int(header, width)
+             _write_int(header, height)
+
+             header.write([8ub, 2ub, 0ub, 0ub, 0ub], 0, 5)
+
+             _write_chunk(out, [73ub, 72ub, 68ub, 82ub], header.to_array())
+             _write_chunk(out, [73ub, 68ub, 65ub, 84ub], _zlib(_scanlines()))
+             _write_chunk(out, [73ub, 69ub, 78ub, 68ub], [])
+
+             out.to_array())
+
+        // Each row copied whole after the zero its filter byte starts as.
         _scanlines() -> ubyte[] =>
-            (let raw = LIST[ubyte]()
+            (let stride = width * 3
+             let raw = System.GC.allocate_array[ubyte](height * (stride + 1), false)
 
              for y in 0..height do
-                 raw.add(0ub)
-
-                 for at in y * width * 3 .. (y + 1) * width * 3 do
-                     raw.add(_pixels[at])
-                 od
+                 _pixels.copy_to(y * stride, raw, y * (stride + 1) + 1, stride)
              od
 
-             raw |> collect_array())
+             raw)
 
         _zlib(data: ubyte[]) -> ubyte[] =>
-            (let out = LIST[ubyte]()
+            (let out = IO.MemoryStream()
 
-             out.add(0x78ub)
-             out.add(0x01ub)
-
-             for value in _deflate(data) do
-                 out.add(value)
-             od
-
-             _append_int(out, _adler32(data))
-
-             out |> collect_array())
-
-        _deflate(data: ubyte[]) -> ubyte[] =>
-            (let buffer = IO.MemoryStream()
+             out.write_byte(0x78ub)
+             out.write_byte(0x01ub)
 
              let stream =
                  System.IO.Compression.DeflateStream(
-                     buffer,
+                     out,
                      System.IO.Compression.CompressionMode.COMPRESS,
                      true
                  )
@@ -572,63 +579,94 @@ namespace Raster is
              stream.write(data, 0, data.count)
              stream.close()
 
-             buffer.to_array())
+             _write_int(out, _adler32(data))
 
-        _adler32(data: ubyte[]) -> int =>
-            (let low mut = 1
-             let high mut = 0
+             out.to_array())
 
-             for value in data do
-                 low = (low + cast int(value)) % 65521
-                 high = (high + low) % 65521
-             od
+        // Sums are taken modulo 65521 once a block rather than once a byte:
+        // 5552 bytes is the most that cannot carry the sums past what a
+        // long holds between reductions, so the result is the same.
+        _adler32(data: ubyte[]) -> int static =>
+            (let low mut = 1L
+             let high mut = 0L
+             let at mut = 0
 
-             (high << 16) | low)
+             while at < data.count do
+                 let stop = Math.min(at + 5552, data.count)
 
-        _append_int(out: LIST[ubyte], value: int) is
-            out.add(cast ubyte((value >> 24) & 0xFF))
-            out.add(cast ubyte((value >> 16) & 0xFF))
-            out.add(cast ubyte((value >> 8) & 0xFF))
-            out.add(cast ubyte(value & 0xFF))
-        si
-
-        _append_chunk(out: LIST[ubyte], kind: string, data: ubyte[]) is
-            _append_int(out, data.count)
-
-            let body = LIST[ubyte]()
-
-            for letter in kind do
-                body.add(cast ubyte(letter))
-            od
-
-            for value in data do
-                body.add(value)
-            od
-
-            for value in body do
-                out.add(value)
-            od
-
-            _append_int(out, _crc32(body |> collect_array()))
-        si
-
-        _crc32(data: ubyte[]) -> int =>
-            (let remainder mut = 0xFFFFFFFFu
-
-             for value in data do
-                 remainder = remainder ^ cast uint(value)
-
-                 for _ in 0..8 do
-                     remainder =
-                         if (remainder & 1u) != 0u then
-                             0xEDB88320u ^ (remainder >>> 1)
-                         else
-                             remainder >>> 1
-                         fi
+                 while at < stop do
+                     low = low + cast long(data[at])
+                     high = high + low
+                     at = at + 1
                  od
+
+                 low = low % 65521L
+                 high = high % 65521L
              od
 
-             cast int(remainder ^ 0xFFFFFFFFu))
+             cast int((high << 16) | low))
+
+        _write_int(out: IO.MemoryStream, value: int) static is
+            out.write_byte(cast ubyte((value >> 24) & 0xFF))
+            out.write_byte(cast ubyte((value >> 16) & 0xFF))
+            out.write_byte(cast ubyte((value >> 8) & 0xFF))
+            out.write_byte(cast ubyte(value & 0xFF))
+        si
+
+        _write_chunk(out: IO.MemoryStream, kind: ubyte[], data: ubyte[]) static is
+            _write_int(out, data.count)
+
+            out.write(kind, 0, kind.count)
+            out.write(data, 0, data.count)
+
+            _write_int(
+                out,
+                cast int(_crc32(_crc32(0xFFFFFFFFu, kind), data) ^ 0xFFFFFFFFu)
+            )
+        si
+
+        // The running CRC carried on over more bytes, a byte at a time
+        // through a table rather than a bit at a time.
+        _crc32(remainder: uint, data: ubyte[]) -> uint static =>
+            (let table = _crc_table
+             let running mut = remainder
+             let at mut = 0
+
+             while at < data.count do
+                 running =
+                     table[cast int((running ^ cast uint(data[at])) & 0xFFu)] ^
+                     (running >>> 8)
+
+                 at = at + 1
+             od
+
+             running)
+
+        _crc_table: uint[] static =>
+            (if !_crc_table_cache? then
+                 let entries = LIST[uint]()
+
+                 for index in 0..256 do
+                     let entry mut = cast uint(index)
+
+                     for _ in 0..8 do
+                         entry =
+                             if (entry & 1u) != 0u then
+                                 0xEDB88320u ^ (entry >>> 1)
+                             else
+                                 entry >>> 1
+                             fi
+                     od
+
+                     entries.add(entry)
+                 od
+
+                 _crc_table_cache = entries.to_array()
+             fi
+
+             _crc_table_cache)
+
+        _crc_table_cache: uint[]? static
 
         // Everything is drawn as strokes, so this is the only place pixels
         // are touched by a drawing operation.
@@ -645,8 +683,28 @@ namespace Raster is
             let top = cast int(Math.floor(Math.min(y0, y1) - reach))
             let bottom = cast int(Math.ceiling(Math.max(y0, y1) + reach))
 
+            // A short stroke, such as one of a letter's, is quicker to scan
+            // whole than to work out the span of each row.
+            let narrow = right - left <= 16
+
             for y in top::bottom do
-                for x in left::right do
+                let row =
+                    if narrow then
+                        (from = cast double(left), to = cast double(right))
+                    else
+                        _stroke_row(cast double(y) + 0.5D, x0, y0, x1, y1, half + 0.5D)
+                    fi
+
+                if row.from > row.to then
+                    continue
+                fi
+
+                let first =
+                    Math.max(left, cast int(Math.floor(Math.max(row.from, cast double(left)))) - 1)
+                let last =
+                    Math.min(right, cast int(Math.ceiling(Math.min(row.to, cast double(right)))) + 1)
+
+                for x in first::last do
                     let away =
                         _distance(
                             cast double(x) + 0.5D,
@@ -658,5 +716,82 @@ namespace Raster is
                 od
             od
         si
+
+        // A span widened by where the row crosses the circle round one end.
+        _end_row(
+            y: double, x: double, end_y: double, limit: double,
+            span: (from: double, to: double)
+        ) -> (from: double, to: double) static =>
+            (let off = y - end_y
+
+             if Math.abs(off) < limit then
+                 (let across = Math.sqrt(limit * limit - off * off)
+
+                  (from = Math.min(span.from, x - across),
+                   to = Math.max(span.to, x + across)))
+             else
+                 span
+             fi)
+
+        // Where a row crosses the capsule of points nearer the segment than
+        // `limit`, so a stroke visits the pixels it can cover rather than its
+        // whole bounding box. The capsule is convex, so the crossing is one
+        // span: the widest of what the two end circles and the band between
+        // them contribute. A pixel is only skipped if it lies outside the span
+        // by more than a pixel, and so would have been given no cover anyway.
+        _stroke_row(
+            y: double,
+            x0: double, y0: double,
+            x1: double, y1: double,
+            limit: double
+        ) -> (from: double, to: double) static =>
+            (let ends =
+                 _end_row(y, x1, y1, limit, _end_row(y, x0, y0, limit, (from = 1.0e300D, to = -1.0e300D)))
+
+             let from mut = ends.from
+             let to mut = ends.to
+
+             let dx = x1 - x0
+             let dy = y1 - y0
+             let square = dx * dx + dy * dy
+
+             if square > 0.0D then
+                 let length = Math.sqrt(square)
+                 let off = y - y0
+
+                 let band =
+                     if dy != 0.0D then
+                         (let a = x0 + (off * dx - limit * length) / dy
+                          let b = x0 + (off * dx + limit * length) / dy
+
+                          (from = Math.min(a, b), to = Math.max(a, b)))
+                     elif Math.abs(off * dx) / length < limit then
+                         (from = -1.0e300D, to = 1.0e300D)
+                     else
+                         (from = 1.0e300D, to = -1.0e300D)
+                     fi
+
+                 let slab =
+                     if dx != 0.0D then
+                         (let a = x0 - off * dy / dx
+                          let b = x0 + (square - off * dy) / dx
+
+                          (from = Math.min(a, b), to = Math.max(a, b)))
+                     elif off * dy >= 0.0D /\ off * dy <= square then
+                         (from = -1.0e300D, to = 1.0e300D)
+                     else
+                         (from = 1.0e300D, to = -1.0e300D)
+                     fi
+
+                 let inside_from = Math.max(band.from, slab.from)
+                 let inside_to = Math.min(band.to, slab.to)
+
+                 if inside_from <= inside_to then
+                     from = Math.min(from, inside_from)
+                     to = Math.max(to, inside_to)
+                 fi
+             fi
+
+             (from = from, to = to))
     si
 si
