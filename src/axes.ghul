@@ -27,6 +27,8 @@ namespace Raster is
         init(image: IMAGE) is
             _image = image
 
+            _keys = LIST[(label: string, colour: (red: ubyte, green: ubyte, blue: ubyte))]()
+
             label_height = 12.0D
             tick_length = 5.0D
 
@@ -57,10 +59,8 @@ namespace Raster is
 
             let gap = label_height / 2.0D
 
-            let across = ticks(low_x, high_x, _most(right - left, 80.0D))
-
-            for value in across do
-                let x = _image.to_pixel(value, bounds.bottom).x
+            for tick in _ticks_along(_x_ticks, low_x, high_x, right - left, 80.0D) do
+                let x = _image.to_pixel(tick.value, bounds.bottom).x
 
                 _line(x, bottom, x, bottom + tick_length)
 
@@ -68,18 +68,16 @@ namespace Raster is
                     _user(x, bottom + tick_length + gap + label_height).x,
                     _user(x, bottom + tick_length + gap + label_height).y,
                     label_height,
-                    label(value, across),
+                    tick.label,
                     Anchor.CENTRE
                 )
             od
 
-            let up = ticks(low_y, high_y, _most(bottom - top, 50.0D))
-
             let widest mut = 0.0D
 
-            for value in up do
-                let y = _image.to_pixel(bounds.left, value).y
-                let text = label(value, up)
+            for tick in _ticks_along(_y_ticks, low_y, high_y, bottom - top, 50.0D) do
+                let y = _image.to_pixel(bounds.left, tick.value).y
+                let text = tick.label
 
                 _line(left, y, left - tick_length, y)
 
@@ -111,6 +109,135 @@ namespace Raster is
                     at.x, at.y, label_height, y_title, Anchor.CENTRE
                 )
             fi
+
+            _draw_key(right, top)
+        si
+
+        // Sets the image's view to this rectangle, leaving room outside it
+        // for everything `draw` puts there: the labels as wide as they turn
+        // out to be, and the titles if there are any.
+        fit(left: double, bottom: double, right: double, top: double) is
+            let pad = 4.0D
+            let gap = label_height / 2.0D
+
+            let margins mut =
+                (left = 40.0D, bottom = 40.0D, right = pad, top = pad)
+
+            // How many ticks fit depends on the room the margins leave, and
+            // the margins on how wide the labels are, so this settles in a
+            // few rounds.
+            for _ in 0..3 do
+                let across =
+                    _ticks_along(
+                        _x_ticks, Math.min(left, right), Math.max(left, right),
+                        cast double(_image.width) - margins.left - margins.right, 80.0D
+                    )
+
+                let up =
+                    _ticks_along(
+                        _y_ticks, Math.min(bottom, top), Math.max(bottom, top),
+                        cast double(_image.height) - margins.bottom - margins.top, 50.0D
+                    )
+
+                let widest mut = 0.0D
+
+                for tick in up do
+                    widest = Math.max(widest, _image.text_width(label_height, tick.label))
+                od
+
+                let last_label =
+                    if across.count > 0 then
+                        _image.text_width(label_height, across[across.count - 1].label)
+                    else
+                        0.0D
+                    fi
+
+                margins = (
+                    left =
+                        tick_length + gap + widest + pad +
+                        (if y_title.length > 0 then gap + label_height else 0.0D fi),
+                    bottom =
+                        tick_length + gap + label_height + pad +
+                        (if x_title.length > 0 then gap + label_height * 1.5D else 0.0D fi),
+                    right = Math.max(pad, last_label / 2.0D + pad),
+                    top = label_height / 2.0D + pad
+                )
+            od
+
+            _image.view(left, bottom, right, top, margins)
+        si
+
+        // Ticks at these values with these labels along the bottom, in place
+        // of round numbers: one for each category of a bar chart, say.
+        x_ticks(ticks: Collections.List[(value: double, label: string)]) is
+            _x_ticks = ticks
+        si
+
+        // The same up the left side.
+        y_ticks(ticks: Collections.List[(value: double, label: string)]) is
+            _y_ticks = ticks
+        si
+
+        _x_ticks: Collections.List[(value: double, label: string)]?
+        _y_ticks: Collections.List[(value: double, label: string)]?
+
+        _ticks_along(
+            given: Collections.List[(value: double, label: string)]?,
+            low: double, high: double, pixels: double, spacing: double
+        ) -> Collections.List[(value: double, label: string)] =>
+            if let ticks = given then
+                ticks
+            else
+                (let values = ticks(low, high, _most(pixels, spacing))
+
+                 values |> map(value => (value = value, label = label(value, values))) |> collect_list())
+            fi
+
+        // A row of the key in the top right corner inside the frame: a
+        // swatch of the colour, then the label in the axes' own colour.
+        key(label: string, colour: (red: ubyte, green: ubyte, blue: ubyte)) is
+            _keys.add((label = label, colour = colour))
+        si
+
+        key(label: string, red: ubyte, green: ubyte, blue: ubyte) is
+            key(label, (red = red, green = green, blue = blue))
+        si
+
+        _keys: LIST[(label: string, colour: (red: ubyte, green: ubyte, blue: ubyte))]
+
+        _draw_key(right: double, top: double) is
+            if _keys.count == 0 then
+                return
+            fi
+
+            let ink = _image.current_colour
+            let pad = label_height / 2.0D
+            let row = label_height * 1.6D
+
+            let widest mut = 0.0D
+
+            for entry in _keys do
+                widest = Math.max(widest, _image.text_width(label_height, entry.label))
+            od
+
+            let swatch_left = right - pad - widest - pad - label_height
+
+            for index in 0.._keys.count do
+                let entry = _keys[index]
+                let baseline = top + pad + row * cast double(index) + label_height
+
+                let from = _user(swatch_left, baseline - label_height)
+                let to = _user(swatch_left + label_height, baseline)
+
+                _image.colour(entry.colour)
+                _image.fill_rectangle(from.x, from.y, to.x, to.y)
+
+                _image.colour(ink)
+
+                let at = _user(swatch_left + label_height + pad, baseline)
+
+                _image.text(at.x, at.y, label_height, entry.label, Anchor.LEFT)
+            od
         si
 
         // Round numbers from `low` to `high` inclusive, one, two or five

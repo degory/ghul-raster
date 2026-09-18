@@ -1,0 +1,203 @@
+namespace Raster is
+    use Collections.LIST
+    use Ghul.Pipes
+    use Math = System.Math
+
+    // Polygons to be filled together by `IMAGE.fill`, each with its own
+    // colour, so that shapes sharing an edge meet without a seam.
+    class SHAPES is
+        _shapes: LIST[(
+            points: Collections.List[(x: double, y: double)],
+            colour: (red: ubyte, green: ubyte, blue: ubyte)
+        )]
+
+        init() is
+            _shapes = LIST[(
+                points: Collections.List[(x: double, y: double)],
+                colour: (red: ubyte, green: ubyte, blue: ubyte)
+            )]()
+        si
+
+        count: int => _shapes.count
+
+        all: Collections.List[(
+            points: Collections.List[(x: double, y: double)],
+            colour: (red: ubyte, green: ubyte, blue: ubyte)
+        )] => _shapes
+
+        add(
+            points: Collections.List[(x: double, y: double)],
+            colour: (red: ubyte, green: ubyte, blue: ubyte)
+        ) is
+            _shapes.add((points = points, colour = colour))
+        si
+
+        add(points: Collections.List[(x: double, y: double)], red: ubyte, green: ubyte, blue: ubyte) is
+            add(points, (red = red, green = green, blue = blue))
+        si
+    si
+
+    partial IMAGE is
+        // A filled rectangle between two corners, in user coordinates.
+        fill_rectangle(x0: double, y0: double, x1: double, y1: double) is
+            fill([(x = x0, y = y0), (x = x1, y = y0), (x = x1, y = y1), (x = x0, y = y1)])
+        si
+
+        // The shapes filled together, each in its own colour. Filled one at a
+        // time, two shapes sharing an edge would each only partly cover the
+        // pixels along it, and the background would show through between
+        // them. Filled together, what each covers of a pixel is added up
+        // first, so shapes that meet cover it completely. Where shapes
+        // overlap, their colours mix.
+        fill(shapes: SHAPES) is
+            let outlines = LIST[(xs: double[], ys: double[], top: int, bottom: int)]()
+
+            let top mut = height
+            let bottom mut = 0
+
+            for shape in shapes.all do
+                let points = shape.points
+
+                let xs =
+                    (0..points.count)
+                        |> map(at => _to_pixel_x(points[at].x, points[at].y))
+                        |> collect_array()
+
+                let ys =
+                    (0..points.count)
+                        |> map(at => _to_pixel_y(points[at].x, points[at].y))
+                        |> collect_array()
+
+                let first =
+                    if points.count < 3 then height else _clamp(ys |> reduce(ys[0], _least), 0, height) fi
+
+                let last =
+                    if points.count < 3 then 0 else _clamp(ys |> reduce(ys[0], _most) + 1.0D, 0, height) fi
+
+                outlines.add((xs = xs, ys = ys, top = first, bottom = last))
+
+                top = Math.min(top, first)
+                bottom = Math.max(bottom, last)
+            od
+
+            let coverage = (0..width) |> map(_ => 0.0D) |> collect_list()
+            let total = (0..width) |> map(_ => 0.0D) |> collect_list()
+            let red = (0..width) |> map(_ => 0.0D) |> collect_list()
+            let green = (0..width) |> map(_ => 0.0D) |> collect_list()
+            let blue = (0..width) |> map(_ => 0.0D) |> collect_list()
+
+            for y in top..bottom do
+                let row_first mut = width
+                let row_last mut = 0
+
+                for index in 0..outlines.count do
+                    let outline = outlines[index]
+
+                    if y < outline.top \/ y >= outline.bottom then
+                        continue
+                    fi
+
+                    let colour = shapes.all[index].colour
+
+                    let first mut = width
+                    let last mut = 0
+
+                    for sample in 0.._SAMPLES do
+                        let at =
+                            cast double(y) +
+                            (cast double(sample) + 0.5D) / cast double(_SAMPLES)
+
+                        let crossings = _crossings(outline.xs, outline.ys, at)
+
+                        if crossings.count >= 2 then
+                            first = Math.min(first, _clamp(crossings[0], 0, width))
+                            last = Math.max(last, _clamp(crossings[crossings.count - 1] + 1.0D, 0, width))
+                        fi
+
+                        let pair mut = 0
+
+                        while pair + 1 < crossings.count do
+                            _cover(coverage, crossings[pair], crossings[pair + 1])
+
+                            pair = pair + 2
+                        od
+                    od
+
+                    for x in first..last do
+                        let covered = coverage[x] / cast double(_SAMPLES)
+
+                        if covered > 0.0D then
+                            total[x] = total[x] + covered
+                            red[x] = red[x] + covered * cast double(colour.red)
+                            green[x] = green[x] + covered * cast double(colour.green)
+                            blue[x] = blue[x] + covered * cast double(colour.blue)
+                        fi
+
+                        coverage[x] = 0.0D
+                    od
+
+                    row_first = Math.min(row_first, first)
+                    row_last = Math.max(row_last, last)
+                od
+
+                for x in row_first..row_last do
+                    let covered = total[x]
+
+                    if covered > 0.0D then
+                        let weight = if covered > 1.0D then 1.0D else covered fi
+                        let under = pixel(x, y)
+
+                        set_pixel(
+                            x, y,
+                            _laid(under.red, red[x] / covered, weight),
+                            _laid(under.green, green[x] / covered, weight),
+                            _laid(under.blue, blue[x] / covered, weight)
+                        )
+                    fi
+
+                    total[x] = 0.0D
+                    red[x] = 0.0D
+                    green[x] = 0.0D
+                    blue[x] = 0.0D
+                od
+            od
+        si
+
+        // A filled round mark centred on a point in user coordinates, with
+        // its radius in pixels, so it stays round however the view is
+        // scaled: the marker for a point on a plot.
+        dot(x: double, y: double, radius: double) is
+            _mark(x, y, radius, true)
+        si
+
+        // The same mark as an outline, in the current stroke.
+        ring(x: double, y: double, radius: double) is
+            _mark(x, y, radius, false)
+        si
+
+        _mark(x: double, y: double, radius: double, filled: bool) is
+            let cx = _to_pixel_x(x, y)
+            let cy = _to_pixel_y(x, y)
+
+            let half = _stroke / 2.0D
+            let reach = radius + half + 1.0D
+
+            for py in cast int(Math.floor(cy - reach))::cast int(Math.ceiling(cy + reach)) do
+                for px in cast int(Math.floor(cx - reach))::cast int(Math.ceiling(cx + reach)) do
+                    let dx = cast double(px) + 0.5D - cx
+                    let dy = cast double(py) + 0.5D - cy
+                    let away = Math.sqrt(dx * dx + dy * dy)
+
+                    if filled then
+                        blend(px, py, radius + 0.5D - away)
+                    else
+                        blend(px, py, half + 0.5D - Math.abs(away - radius))
+                    fi
+                od
+            od
+        si
+
+        _laid(under: ubyte, over: double, weight: double) -> ubyte static =>
+            cast ubyte(cast double(under) * (1.0D - weight) + over * weight + 0.5D)
+    si
+si
