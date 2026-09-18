@@ -32,9 +32,11 @@ namespace Raster is
     class FONT is
         _glyphs: MAP[char, GLYPH]
 
-        // The face's own units. A capital reaches 12 above the baseline, so a
-        // caller asking for a height in pixels is asking about that.
-        CAP_HEIGHT: double static => 12.0D
+        // The face's own units, in which y increases downwards. A capital
+        // runs from 12 above the origin to the baseline 9 below it, so a
+        // caller asking for a height in pixels is asking about those 21.
+        CAP_HEIGHT: double static => 21.0D
+        BASELINE: double static => 9.0D
 
         init(glyphs: MAP[char, GLYPH]) is
             _glyphs = glyphs
