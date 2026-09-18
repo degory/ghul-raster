@@ -3,14 +3,14 @@
   "isRoot": true,
   "tools": {
     "ghul.compiler": {
-      "version": "59.0.5",
+      "version": "59.3.0",
       "commands": [
         "ghul-compiler"
       ],
       "rollForward": false
     },
     "ghul.test": {
-      "version": "3.5.2",
+      "version": "3.6.1",
       "commands": [
         "ghul-test"
       ],
