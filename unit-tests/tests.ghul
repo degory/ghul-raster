@@ -328,6 +328,44 @@ namespace Raster.Tests is
         si
 
         @Test()
+        Clearing_an_image_makes_it_white_again() is
+            let image = IMAGE(20, 20)
+
+            image.colour(0ub, 0ub, 0ub)
+            image.disc(10.0D, 10.0D, 8.0D)
+
+            image.clear()
+
+            assert _inked(image) == 0 else "ink survived the clear"
+        si
+
+        @Test()
+        Encoding_gives_the_bytes_a_write_would() is
+            let image = IMAGE(30, 20)
+
+            image.colour(10ub, 90ub, 200ub)
+            image.line(2.0D, 2.0D, 27.0D, 17.0D)
+
+            let path = IO.Path.get_temp_file_name()
+
+            image.write(path)
+
+            let written = IO.File.read_all_bytes(path)
+
+            IO.File.delete(path)
+
+            let encoded = image.encode()
+
+            assert encoded.count == written.count
+
+            for at in 0..encoded.count do
+                assert encoded[at] == written[at] else "byte {at} differs"
+            od
+
+            assert IMAGE.decode(encoded).pixel(15, 10) =~ image.pixel(15, 10)
+        si
+
+        @Test()
         A_blend_outside_the_image_is_ignored() is
             let image = IMAGE(2, 2)
 

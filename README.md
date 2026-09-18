@@ -101,10 +101,19 @@ The scales are linear.
 
 ## Pixels
 
+`clear` sets every pixel back to white, so a program drawing frame after frame
+can reuse one image rather than allocating another for each.
+
 `set_pixel` writes a pixel outright and `pixel` reads one back. `blend` lays
 part of the current colour over what is already there, which is what a program
 drawing its own shapes needs to antialias them. A position outside the image is
 ignored by both writers.
+
+## Writing a PNG
+
+`write` puts the image in a file, and `encode` gives the same bytes to a program
+with somewhere else to send them. The output is deterministic: the same pixels
+always encode to the same bytes.
 
 ## Reading a PNG
 
