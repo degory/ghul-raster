@@ -1,0 +1,155 @@
+namespace Raster is
+    use Collections.LIST
+    use Math = System.Math
+
+    // What writing a PNG takes beyond the pixels: chunks, their checksums,
+    // and the compressed image data. A still image and an animation are
+    // written with the same pieces.
+    class _PNG is
+        IHDR: ubyte[] static => [73ub, 72ub, 68ub, 82ub]
+        IDAT: ubyte[] static => [73ub, 68ub, 65ub, 84ub]
+        IEND: ubyte[] static => [73ub, 69ub, 78ub, 68ub]
+
+        // The signature and the header, which every PNG starts with.
+        write_start(out: IO.MemoryStream, width: int, height: int) static is
+            out.write([137ub, 80ub, 78ub, 71ub, 13ub, 10ub, 26ub, 10ub], 0, 8)
+
+            let header = IO.MemoryStream()
+
+            write_int(header, width)
+            write_int(header, height)
+
+            header.write([8ub, 2ub, 0ub, 0ub, 0ub], 0, 5)
+
+            write_chunk(out, IHDR, header.to_array())
+        si
+
+        // Pixels as `IMAGE.rgb` gives them, as the zlib stream a PNG's image
+        // data holds.
+        compress(rgb: ubyte[], width: int, height: int) -> ubyte[] static =>
+            zlib(scanlines(rgb, width, height))
+
+        // Each row copied whole after the zero its filter byte starts as.
+        scanlines(rgb: ubyte[], width: int, height: int) -> ubyte[] static =>
+            (let stride = width * 3
+             let raw = System.GC.allocate_array[ubyte](height * (stride + 1), false)
+
+             for y in 0..height do
+                 System.MemoryExtensions
+                     .as_span(rgb, y * stride, stride)
+                     .copy_to(System.MemoryExtensions.as_span(raw, y * (stride + 1) + 1))
+             od
+
+             raw)
+
+        zlib(data: ubyte[]) -> ubyte[] static =>
+            (let out = IO.MemoryStream()
+
+             out.write_byte(0x78ub)
+             out.write_byte(0x01ub)
+
+             let stream =
+                 System.IO.Compression.DeflateStream(
+                     out,
+                     System.IO.Compression.CompressionMode.COMPRESS,
+                     true
+                 )
+
+             stream.write(data, 0, data.count)
+             stream.close()
+
+             write_int(out, adler32(data))
+
+             out.to_array())
+
+        // Sums are taken modulo 65521 once a block rather than once a byte:
+        // 5552 bytes is the most that cannot carry the sums past what a
+        // long holds between reductions, so the result is the same.
+        adler32(data: ubyte[]) -> int static =>
+            (let low mut = 1L
+             let high mut = 0L
+             let at mut = 0
+
+             while at < data.count do
+                 let stop = Math.min(at + 5552, data.count)
+
+                 while at < stop do
+                     low = low + cast long(data[at])
+                     high = high + low
+                     at = at + 1
+                 od
+
+                 low = low % 65521L
+                 high = high % 65521L
+             od
+
+             cast int((high << 16) | low))
+
+        write_int(out: IO.MemoryStream, value: int) static is
+            out.write_byte(cast ubyte((value >> 24) & 0xFF))
+            out.write_byte(cast ubyte((value >> 16) & 0xFF))
+            out.write_byte(cast ubyte((value >> 8) & 0xFF))
+            out.write_byte(cast ubyte(value & 0xFF))
+        si
+
+        write_short(out: IO.MemoryStream, value: int) static is
+            out.write_byte(cast ubyte((value >> 8) & 0xFF))
+            out.write_byte(cast ubyte(value & 0xFF))
+        si
+
+        write_chunk(out: IO.MemoryStream, kind: ubyte[], data: ubyte[]) static is
+            write_int(out, data.count)
+
+            out.write(kind, 0, kind.count)
+            out.write(data, 0, data.count)
+
+            write_int(
+                out,
+                cast int(crc32(crc32(0xFFFFFFFFu, kind), data) ^ 0xFFFFFFFFu)
+            )
+        si
+
+        // The running CRC carried on over more bytes, a byte at a time
+        // through a table rather than a bit at a time.
+        crc32(remainder: uint, data: ubyte[]) -> uint static =>
+            (let table = _table
+             let running mut = remainder
+             let at mut = 0
+
+             while at < data.count do
+                 running =
+                     table[cast int((running ^ cast uint(data[at])) & 0xFFu)] ^
+                     (running >>> 8)
+
+                 at = at + 1
+             od
+
+             running)
+
+        _table: uint[] static =>
+            (if !_table_cache? then
+                 let entries = LIST[uint]()
+
+                 for index in 0..256 do
+                     let entry mut = cast uint(index)
+
+                     for _ in 0..8 do
+                         entry =
+                             if (entry & 1u) != 0u then
+                                 0xEDB88320u ^ (entry >>> 1)
+                             else
+                                 entry >>> 1
+                             fi
+                     od
+
+                     entries.add(entry)
+                 od
+
+                 _table_cache = entries.to_array()
+             fi
+
+             _table_cache)
+
+        _table_cache: uint[]? static
+    si
+si
