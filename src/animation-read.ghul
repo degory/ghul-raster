@@ -1,0 +1,113 @@
+namespace Raster is
+    use Collections.LIST
+
+    // Reading an animated PNG back in, a frame at a time. A PNG with no
+    // animation reads as one frame.
+    partial ANIMATION is
+        read(path: string) -> ANIMATION static =>
+            decode(IO.File.read_all_bytes(path))
+
+        // Each frame is drawn onto what the frames before it left, and then
+        // taken as a whole image, so a frame covering part of the image or
+        // blending over it reads as what a browser would show.
+        decode(bytes: ubyte[]) -> ANIMATION static is
+            let header = _DECODER.header(bytes)
+            let palette = _DECODER.palette(bytes)
+
+            let controls =
+                LIST[(left: int, top: int, width: int, height: int,
+                      delay: int, dispose: int, blend: int)]()
+
+            let data = LIST[LIST[ubyte]]()
+
+            let plays mut = -1
+
+            _DECODER.chunks(bytes, (kind, from, to) is
+                if kind =~ "acTL" then
+                    plays = _DECODER.be32(bytes, from + 4)
+                elif kind =~ "fcTL" then
+                    let numerator = (cast int(bytes[from + 20]) << 8) | cast int(bytes[from + 21])
+                    let denominator = (cast int(bytes[from + 22]) << 8) | cast int(bytes[from + 23])
+
+                    controls.add((
+                        left = _DECODER.be32(bytes, from + 12),
+                        top = _DECODER.be32(bytes, from + 16),
+                        width = _DECODER.be32(bytes, from + 4),
+                        height = _DECODER.be32(bytes, from + 8),
+                        delay = _milliseconds(numerator, denominator),
+                        dispose = cast int(bytes[from + 24]),
+                        blend = cast int(bytes[from + 25])
+                    ))
+
+                    data.add(LIST[ubyte]())
+                elif kind =~ "IDAT" then
+                    // Image data is the first frame only if a frame control
+                    // came before it; otherwise it is a still shown by
+                    // readers that do not animate, and no frame at all.
+                    if data.count > 0 then
+                        data[data.count - 1].add_range(System.ArraySegment[ubyte](bytes, from, to - from))
+                    fi
+                elif kind =~ "fdAT" then
+                    if data.count > 0 then
+                        data[data.count - 1].add_range(System.ArraySegment[ubyte](bytes, from + 4, to - from - 4))
+                    fi
+                fi
+            si)
+
+            let animation = ANIMATION(header.width, header.height)
+
+            if plays < 0 \/ controls.count == 0 then
+                animation.add(IMAGE.decode(bytes), 0)
+
+                return animation
+            fi
+
+            animation.loops = plays
+
+            let canvas mut = IMAGE(header.width, header.height)
+
+            for index in 0..controls.count do
+                let control = controls[index]
+
+                let before: ubyte[] = if control.dispose == 2 then canvas.rgb() else [] fi
+
+                _DECODER.draw(
+                    canvas, data[index].to_array(), header, palette,
+                    control.left, control.top, control.width, control.height,
+                    control.blend == 1
+                )
+
+                animation.add(canvas, control.delay)
+
+                if control.dispose == 1 then
+                    for y in control.top..control.top + control.height do
+                        for x in control.left..control.left + control.width do
+                            canvas.set_pixel(x, y, 255ub, 255ub, 255ub)
+                        od
+                    od
+                elif control.dispose == 2 then
+                    canvas = IMAGE.from_rgb(header.width, header.height, before)
+                fi
+            od
+
+            return animation
+        si
+
+        // A frame's delay is a fraction of a second, and a denominator of
+        // zero means hundredths.
+        _milliseconds(numerator: int, denominator: int) -> int static =>
+            (let over = if denominator == 0 then 100 else denominator fi
+
+             (numerator * 1000 + over / 2) / over)
+
+        // The frame at `index` as an image of its own.
+        frame(index: int) -> IMAGE =>
+            IMAGE.from_rgb(width, height, _rgb(index))
+
+        // How long the frame at `index` is shown, in milliseconds.
+        delay(index: int) -> int => _delays[index]
+
+        _rgb(index: int) -> ubyte[] =>
+            _DECODER.unfilter(_DECODER.inflate(_frames[index]), width, height, 3, false)
+    si
+si

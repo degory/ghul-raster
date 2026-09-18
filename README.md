@@ -141,6 +141,25 @@ the whole image, compressed on its own when it is added, and the output is
 deterministic. A reader that does not know about animation, `IMAGE.read`
 among them, sees the first frame.
 
+`ANIMATION.read` and `ANIMATION.decode` read every frame back, with `frame`
+giving each as an image and `delay` how long it shows. Each frame is drawn onto
+what the ones before it left, as a browser would show it, so an animation that
+updates part of the image reads correctly too. A PNG with no animation reads as
+one frame.
+
+### As a GIF
+
+`write_gif` and `encode_gif` write the same frames as an animated GIF, for
+somewhere that plays a GIF but not an animated PNG. A GIF holds at most 256
+colours, shared here by every frame: if the frames use no more than 256
+between them the GIF is exact, and otherwise 256 are chosen by median cut and
+each pixel takes the nearest, without dithering. A GIF counts delays in
+hundredths of a second, so they are rounded to the nearest hundredth, and
+browsers show anything under two hundredths for a tenth, so a shorter delay
+becomes two hundredths. `loops` carries over as the looping extension, which
+counts repeats after the first play; an animation that plays once leaves it
+out. The output is deterministic.
+
 ## Reading a PNG
 
 `IMAGE.read` decodes a PNG file into an image, and `IMAGE.decode` does the

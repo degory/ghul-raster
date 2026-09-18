@@ -543,6 +543,21 @@ namespace Raster is
 
              out.to_array())
 
+        // An image holding these pixels, laid out as `rgb` gives them.
+        from_rgb(width: int, height: int, rgb: ubyte[]) -> IMAGE static is
+            if rgb.count != width * height * 3 then
+                throw System.ArgumentException(
+                    "{rgb.count} bytes are not a {width} by {height} image"
+                )
+            fi
+
+            let image = IMAGE(width, height)
+
+            image._pixels = LIST[ubyte](rgb)
+
+            return image
+        si
+
         // A copy of the pixels, three bytes each for red, green and blue, a
         // row at a time from the top.
         rgb() -> ubyte[] =>

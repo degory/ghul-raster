@@ -22,3 +22,7 @@ output.txt
 *.png
 !*.png.expected
 !**/images/*.png
+
+# animations a test wrote, as for images above
+*.gif
+!*.gif.expected
