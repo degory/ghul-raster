@@ -1,0 +1,385 @@
+namespace Raster is
+    use Collections.LIST
+    use Collections.MAP
+    use Math = System.Math
+
+    // Writing an animation as a GIF, for somewhere that animates a GIF but
+    // not a PNG. A GIF holds at most 256 colours, so the frames share one
+    // palette: every colour they use if there are few enough, otherwise 256
+    // chosen by median cut, each pixel taking the nearest.
+    partial ANIMATION is
+        write_gif(path: string) is
+            IO.File.write_all_bytes(path, encode_gif())
+        si
+
+        encode_gif() -> ubyte[] =>
+            (if _frames.count == 0 then
+                 throw System.InvalidOperationException("an animation needs at least one frame")
+             fi
+
+             let frames = LIST[ubyte[]]()
+
+             for index in 0.._frames.count do
+                 frames.add(_rgb(index))
+             od
+
+             _GIF.encode(width, height, frames, _delays, loops))
+    si
+
+    class _GIF is
+        encode(
+            width: int, height: int,
+            frames: LIST[ubyte[]], delays: LIST[int], loops: int
+        ) -> ubyte[] static =>
+            (let palette = choose_palette(frames)
+             let lookup = MAP[int, int]()
+
+             let bits mut = 1
+
+             while (1 << bits) < palette.count do
+                 bits = bits + 1
+             od
+
+             let out = IO.MemoryStream()
+
+             out.write([71ub, 73ub, 70ub, 56ub, 57ub, 97ub], 0, 6)
+
+             _short(out, width)
+             _short(out, height)
+
+             out.write_byte(cast ubyte(0xF0 | (bits - 1)))
+             out.write_byte(0ub)
+             out.write_byte(0ub)
+
+             for index in 0..(1 << bits) do
+                 let colour = if index < palette.count then palette[index] else 0 fi
+
+                 out.write_byte(cast ubyte((colour >> 16) & 0xFF))
+                 out.write_byte(cast ubyte((colour >> 8) & 0xFF))
+                 out.write_byte(cast ubyte(colour & 0xFF))
+             od
+
+             // Plays once without the looping extension; otherwise it counts
+             // repeats after the first play, with zero meaning forever.
+             if loops != 1 then
+                 out.write([0x21ub, 0xFFub, 0x0Bub], 0, 3)
+                 out.write([78ub, 69ub, 84ub, 83ub, 67ub, 65ub, 80ub, 69ub, 50ub, 46ub, 48ub], 0, 11)
+                 out.write([3ub, 1ub], 0, 2)
+
+                 _short(out, if loops == 0 then 0 else Math.min(loops - 1, 65535) fi)
+
+                 out.write_byte(0ub)
+             fi
+
+             let minimum = Math.max(2, bits)
+
+             for index in 0..frames.count do
+                 out.write([0x21ub, 0xF9ub, 4ub, 4ub], 0, 4)
+                 _short(out, centiseconds(delays[index]))
+                 out.write([0ub, 0ub], 0, 2)
+
+                 out.write_byte(0x2Cub)
+                 _short(out, 0)
+                 _short(out, 0)
+                 _short(out, width)
+                 _short(out, height)
+                 out.write_byte(0ub)
+
+                 let indices = _indices(frames[index], palette, lookup)
+
+                 out.write_byte(cast ubyte(minimum))
+
+                 _blocks(out, compress(indices, minimum))
+             od
+
+             out.write_byte(0x3Bub)
+
+             out.to_array())
+
+        // A GIF counts time in hundredths of a second, and browsers show a
+        // frame of less than two hundredths for a tenth, so shorter delays
+        // are lengthened to two hundredths rather than slowed five times.
+        centiseconds(milliseconds: int) -> int static =>
+            Math.min(65535, Math.max(2, (milliseconds + 5) / 10))
+
+        _short(out: IO.MemoryStream, value: int) static is
+            out.write_byte(cast ubyte(value & 0xFF))
+            out.write_byte(cast ubyte((value >> 8) & 0xFF))
+        si
+
+        // Colours as 0xRRGGBB. Every distinct colour, in ascending order, if
+        // there are no more than 256; otherwise the median cut of them.
+        choose_palette(frames: LIST[ubyte[]]) -> LIST[int] static is
+            let counts = MAP[int, int]()
+
+            for frame in frames do
+                let at mut = 0
+
+                while at < frame.count do
+                    let colour =
+                        (cast int(frame[at]) << 16) |
+                        (cast int(frame[at + 1]) << 8) |
+                        cast int(frame[at + 2])
+
+                    if counts.contains_key(colour) then
+                        counts[colour] = counts[colour] + 1
+                    else
+                        counts[colour] = 1
+                    fi
+
+                    at = at + 3
+                od
+            od
+
+            let colours = LIST[int](counts.keys)
+
+            colours.sort()
+
+            if colours.count <= 256 then
+                return colours
+            fi
+
+            return _median_cut(colours, counts, 256)
+        si
+
+        // Splits the colours into boxes, each time halving the box that
+        // spans the most along any one channel at the median pixel along
+        // that channel, and returns the pixel-weighted mean of each box.
+        _median_cut(colours: LIST[int], counts: MAP[int, int], wanted: int) -> LIST[int] static is
+            let boxes = LIST[LIST[int]]()
+
+            boxes.add(colours)
+
+            while boxes.count < wanted do
+                let widest mut = -1
+                let widest_span mut = 0
+                let widest_channel mut = 0
+
+                for index in 0..boxes.count do
+                    if boxes[index].count > 1 then
+                        for channel in 0..3 do
+                            let span = _span(boxes[index], channel)
+
+                            if span > widest_span then
+                                widest = index
+                                widest_span = span
+                                widest_channel = channel
+                            fi
+                        od
+                    fi
+                od
+
+                if widest < 0 then
+                    break
+                fi
+
+                let box = boxes[widest]
+                let channel = widest_channel
+
+                box.sort((a, b) =>
+                    (let by = _channel(a, channel) - _channel(b, channel)
+
+                     if by != 0 then by elif a < b then -1 elif a > b then 1 else 0 fi))
+
+                let total mut = 0
+
+                for colour in box do
+                    total = total + counts[colour]
+                od
+
+                let seen mut = 0
+                let split mut = 1
+
+                for index in 0..box.count - 1 do
+                    seen = seen + counts[box[index]]
+
+                    if seen * 2 >= total then
+                        split = index + 1
+                        break
+                    fi
+                od
+
+                boxes[widest] = box.get_range(0, split)
+                boxes.add(box.get_range(split, box.count - split))
+            od
+
+            let palette = LIST[int]()
+
+            for box in boxes do
+                let weight mut = 0L
+                let red mut = 0L
+                let green mut = 0L
+                let blue mut = 0L
+
+                for colour in box do
+                    let count = cast long(counts[colour])
+
+                    weight = weight + count
+                    red = red + count * cast long(_channel(colour, 0))
+                    green = green + count * cast long(_channel(colour, 1))
+                    blue = blue + count * cast long(_channel(colour, 2))
+                od
+
+                palette.add(
+                    cast int(((red + weight / 2L) / weight) << 16) |
+                    cast int(((green + weight / 2L) / weight) << 8) |
+                    cast int((blue + weight / 2L) / weight)
+                )
+            od
+
+            return palette
+        si
+
+        _channel(colour: int, channel: int) -> int static =>
+            (colour >> (16 - 8 * channel)) & 0xFF
+
+        _span(box: LIST[int], channel: int) -> int static =>
+            (let low mut = 255
+             let high mut = 0
+
+             for colour in box do
+                 let value = _channel(colour, channel)
+
+                 low = Math.min(low, value)
+                 high = Math.max(high, value)
+             od
+
+             high - low)
+
+        // Each pixel's palette index: its own colour's where the palette
+        // holds it, otherwise the nearest, lower index winning a tie.
+        _indices(frame: ubyte[], palette: LIST[int], lookup: MAP[int, int]) -> LIST[int] static is
+            let indices = LIST[int](frame.count / 3)
+            let at mut = 0
+
+            while at < frame.count do
+                let colour =
+                    (cast int(frame[at]) << 16) |
+                    (cast int(frame[at + 1]) << 8) |
+                    cast int(frame[at + 2])
+
+                if !lookup.contains_key(colour) then
+                    lookup[colour] = _nearest(colour, palette)
+                fi
+
+                indices.add(lookup[colour])
+
+                at = at + 3
+            od
+
+            return indices
+        si
+
+        _nearest(colour: int, palette: LIST[int]) -> int static is
+            let best mut = 0
+            let best_distance mut = 0x7FFFFFFF
+
+            for index in 0..palette.count do
+                let red = _channel(colour, 0) - _channel(palette[index], 0)
+                let green = _channel(colour, 1) - _channel(palette[index], 1)
+                let blue = _channel(colour, 2) - _channel(palette[index], 2)
+
+                let distance = red * red + green * green + blue * blue
+
+                if distance < best_distance then
+                    best = index
+                    best_distance = distance
+                fi
+            od
+
+            return best
+        si
+
+        // LZW as GIF uses it: codes start one bit wider than the minimum
+        // size, grow as the table fills, and the table starts again from
+        // a clear code once it holds 4096 entries.
+        compress(indices: LIST[int], minimum: int) -> ubyte[] static is
+            let out = IO.MemoryStream()
+
+            let clear = 1 << minimum
+            let finish = clear + 1
+
+            let table = MAP[int, int]()
+            let next mut = finish + 1
+            let size mut = minimum + 1
+
+            let pending mut = 0
+            let pending_bits mut = 0
+
+            let emit = (code: int) is
+                pending = pending | (code << pending_bits)
+                pending_bits = pending_bits + size
+
+                while pending_bits >= 8 do
+                    out.write_byte(cast ubyte(pending & 0xFF))
+
+                    pending = pending >>> 8
+                    pending_bits = pending_bits - 8
+                od
+            si
+
+            emit(clear)
+
+            let prefix mut = indices[0]
+
+            for at in 1..indices.count do
+                let index = indices[at]
+                let key = (prefix << 8) | index
+
+                if table.contains_key(key) then
+                    prefix = table[key]
+                else
+                    emit(prefix)
+
+                    if next < 4096 then
+                        if next > (1 << size) - 1 /\ size < 12 then
+                            size = size + 1
+                        fi
+
+                        table[key] = next
+                        next = next + 1
+                    else
+                        emit(clear)
+
+                        table.clear()
+                        next = finish + 1
+                        size = minimum + 1
+                    fi
+
+                    prefix = index
+                fi
+            od
+
+            emit(prefix)
+
+            if next > (1 << size) - 1 /\ size < 12 then
+                size = size + 1
+            fi
+
+            emit(finish)
+
+            if pending_bits > 0 then
+                out.write_byte(cast ubyte(pending & 0xFF))
+            fi
+
+            return out.to_array()
+        si
+
+        // Image data is split into blocks of up to 255 bytes, each with its
+        // length first, and ends with an empty one.
+        _blocks(out: IO.MemoryStream, data: ubyte[]) static is
+            let at mut = 0
+
+            while at < data.count do
+                let length = Math.min(255, data.count - at)
+
+                out.write_byte(cast ubyte(length))
+                out.write(data, at, length)
+
+                at = at + length
+            od
+
+            out.write_byte(0ub)
+        si
+    si
+si

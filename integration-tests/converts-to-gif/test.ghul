@@ -1,0 +1,40 @@
+use System.Math
+use Raster.ANIMATION
+use Raster.COLOUR_MAP
+use Raster.IMAGE
+use IO.Std.write_line
+
+// An animated PNG written, read back a frame at a time, and written again as
+// a GIF, which is how an animation reaches somewhere that plays a GIF but
+// not a PNG.
+let frames = 10
+
+let image = IMAGE(120, 90)
+let animation = ANIMATION(120, 90)
+
+image.view(0.0D, 0.0D, 4.0D, 3.0D)
+image.stroke(2.0D)
+
+for index in 0..frames do
+    let turn = cast double(index) / cast double(frames)
+
+    image.clear()
+
+    image.colour(COLOUR_MAP.viridis(turn))
+    image.disc(2.0D, 1.5D, 1.2D)
+
+    image.colour(40ub, 40ub, 40ub)
+    image.arc(2.0D, 1.5D, 1.2D, 360.0D * turn, 360.0D * turn + 90.0D)
+
+    animation.add(image, 60)
+od
+
+animation.write("spinner.png")
+
+let read = ANIMATION.read("spinner.png")
+
+read.write_gif("spinner.gif")
+
+write_line("{read.frame_count} frames, {read.delay(0)} ms each")
+
+read.show("spinner.gif")

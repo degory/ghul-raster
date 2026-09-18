@@ -827,4 +827,336 @@ namespace Raster.Tests is
             assert bytes[33 + 4 + 4 + 7] == 3ub else "loop count is not 3"
         si
     si
+
+    @TestClass()
+    class ANIMATION_READ_Tests is
+        init() is si
+
+        _animation() -> ANIMATION =>
+            (let animation = ANIMATION(24, 16)
+             let image = IMAGE(24, 16)
+
+             for index in 0..3 do
+                 image.clear()
+                 image.colour(cast ubyte(80 * index), 40ub, 200ub)
+                 image.disc(4.0D + 7.0D * cast double(index), 8.0D, 4.0D)
+
+                 animation.add(image, 40 + 30 * index)
+             od
+
+             animation.loops = 2
+
+             animation)
+
+        @Test()
+        Every_frame_reads_back_as_it_was_written() is
+            let written = _animation()
+            let read = ANIMATION.decode(written.encode())
+
+            assert read.frame_count == 3 else "{read.frame_count} frames"
+            assert read.loops == 2
+
+            for index in 0..3 do
+                assert read.delay(index) == written.delay(index)
+                    else "frame {index} delay {read.delay(index)}"
+
+                let a = read.frame(index).rgb()
+                let b = written.frame(index).rgb()
+
+                for at in 0..a.count do
+                    assert a[at] == b[at] else "frame {index} byte {at} differs"
+                od
+            od
+        si
+
+        @Test()
+        A_still_image_reads_as_one_frame() is
+            let image = IMAGE(8, 8)
+
+            image.colour(0ub, 0ub, 0ub)
+            image.line(0.0D, 0.0D, 8.0D, 8.0D)
+
+            let read = ANIMATION.decode(image.encode())
+
+            assert read.frame_count == 1
+            assert read.frame(0).pixel(4, 4) =~ image.pixel(4, 4)
+        si
+    si
+
+    @TestClass()
+    class GIF_Tests is
+        init() is si
+
+        // Enough of a GIF reader to check the writer: the screen size, the
+        // global palette, and each frame's pixels as colours, plus the delays.
+        _decode(bytes: ubyte[]) -> (width: int, height: int, palette: Collections.List[int],
+                                    frames: Collections.List[Collections.List[int]],
+                                    delays: Collections.List[int], loop: int) =>
+            (let width = cast int(bytes[6]) | (cast int(bytes[7]) << 8)
+             let height = cast int(bytes[8]) | (cast int(bytes[9]) << 8)
+             let entries = 2 << (cast int(bytes[10]) & 7)
+
+             let palette = Collections.LIST[int]()
+
+             for index in 0..entries do
+                 palette.add(
+                     (cast int(bytes[13 + index * 3]) << 16) |
+                     (cast int(bytes[14 + index * 3]) << 8) |
+                     cast int(bytes[15 + index * 3]))
+             od
+
+             let frames = Collections.LIST[Collections.List[int]]()
+             let delays = Collections.LIST[int]()
+             let loop mut = -1
+             let at mut = 13 + entries * 3
+
+             while bytes[at] != 0x3Bub do
+                 if bytes[at] == 0x21ub then
+                     let label = bytes[at + 1]
+
+                     if label == 0xF9ub then
+                         delays.add(cast int(bytes[at + 4]) | (cast int(bytes[at + 5]) << 8))
+                     elif label == 0xFFub then
+                         loop = cast int(bytes[at + 16]) | (cast int(bytes[at + 17]) << 8)
+                     fi
+
+                     at = at + 2
+
+                     while bytes[at] != 0ub do
+                         at = at + 1 + cast int(bytes[at])
+                     od
+
+                     at = at + 1
+                 else
+                     at = at + 10
+
+                     let minimum = cast int(bytes[at])
+                     let data = Collections.LIST[ubyte]()
+
+                     at = at + 1
+
+                     while bytes[at] != 0ub do
+                         for offset in 1::cast int(bytes[at]) do
+                             data.add(bytes[at + offset])
+                         od
+
+                         at = at + 1 + cast int(bytes[at])
+                     od
+
+                     at = at + 1
+
+                     frames.add(
+                         _lzw(data, minimum) |> map(index => palette[index]) |> collect_list())
+                 fi
+             od
+
+             (width = width, height = height, palette = palette,
+              frames = frames, delays = delays, loop = loop))
+
+        _lzw(data: Collections.List[ubyte], minimum: int) -> Collections.List[int] =>
+            (let clear = 1 << minimum
+             let finish = clear + 1
+             let table = Collections.LIST[Collections.List[int]]()
+             let out = Collections.LIST[int]()
+
+             let size mut = minimum + 1
+             let bit mut = 0
+             let previous: Collections.List[int]? mut = null
+
+             let reset = () is
+                 table.clear()
+
+                 for index in 0..clear + 2 do
+                     table.add([index])
+                 od
+
+                 size = minimum + 1
+                 previous = null
+             si
+
+             reset()
+
+             do
+                 let code mut = 0
+
+                 for offset in 0..size do
+                     let at = bit + offset
+
+                     if (cast int(data[at / 8]) >> (at % 8)) & 1 == 1 then
+                         code = code | (1 << offset)
+                     fi
+                 od
+
+                 bit = bit + size
+
+                 if code == clear then
+                     reset()
+                     continue
+                 fi
+
+                 if code == finish then
+                     break
+                 fi
+
+                 let entry =
+                     if code < table.count then
+                         table[code]
+                     elif let before = previous then
+                         before |> cat([before[0]]) |> collect_list()
+                     else
+                         throw System.Exception("code {code} before any entry")
+                     fi
+
+                 for index in entry do
+                     out.add(index)
+                 od
+
+                 if let before = previous then
+                     if table.count < 4096 then
+                         table.add(before |> cat([entry[0]]) |> collect_list())
+                     fi
+                 fi
+
+                 if table.count == (1 << size) /\ size < 12 then
+                     size = size + 1
+                 fi
+
+                 previous = entry
+             od
+
+             out)
+
+        _colours(image: IMAGE) -> Collections.List[int] =>
+            (let rgb = image.rgb()
+
+             (0..rgb.count / 3)
+                 |> map(at =>
+                     (cast int(rgb[at * 3]) << 16) |
+                     (cast int(rgb[at * 3 + 1]) << 8) |
+                     cast int(rgb[at * 3 + 2]))
+                 |> collect_list())
+
+        @Test()
+        Few_colours_come_back_exactly() is
+            let animation = ANIMATION(30, 20)
+            let image = IMAGE(30, 20)
+
+            image.colour(200ub, 30ub, 30ub)
+            image.set_pixel(3, 3, 10ub, 20ub, 30ub)
+            animation.add(image, 100)
+
+            image.set_pixel(4, 4, 1ub, 2ub, 3ub)
+            animation.add(image, 250)
+
+            let gif = _decode(animation.encode_gif())
+
+            assert gif.width == 30 /\ gif.height == 20
+            assert gif.frames.count == 2
+            assert gif.loop == 0 else "loops {gif.loop}"
+            assert gif.delays[0] == 10 /\ gif.delays[1] == 25
+
+            for index in 0..2 do
+                let expected = _colours(animation.frame(index))
+
+                for at in 0..expected.count do
+                    assert gif.frames[index][at] == expected[at]
+                        else "frame {index} pixel {at}"
+                od
+            od
+        si
+
+        @Test()
+        Many_colours_share_a_palette_of_256_near_them() is
+            let animation = ANIMATION(64, 64)
+            let image = IMAGE(64, 64)
+
+            for y in 0..64 do
+                for x in 0..64 do
+                    image.set_pixel(x, y, cast ubyte(x * 4), cast ubyte(y * 4), cast ubyte((x + y) * 2))
+                od
+            od
+
+            animation.add(image, 50)
+
+            let bytes = animation.encode_gif()
+            let gif = _decode(bytes)
+            let expected = _colours(image)
+
+            assert gif.palette.count == 256
+
+            for at in 0..expected.count do
+                let a = gif.frames[0][at]
+                let b = expected[at]
+
+                for shift in [0, 8, 16] do
+                    assert Math.abs(((a >> shift) & 0xFF) - ((b >> shift) & 0xFF)) < 24
+                        else "pixel {at} strayed from {b} to {a}"
+                od
+            od
+
+            let again = animation.encode_gif()
+
+            assert again.count == bytes.count
+
+            for at in 0..bytes.count do
+                assert again[at] == bytes[at] else "byte {at} differs between encodings"
+            od
+        si
+
+        @Test()
+        A_large_frame_runs_the_code_table_full_and_clears_it() is
+            let animation = ANIMATION(200, 150)
+            let image = IMAGE(200, 150)
+            let random = System.Random(7)
+
+            for y in 0..150 do
+                for x in 0..200 do
+                    let shade = cast ubyte(random.next(0, 200))
+
+                    image.set_pixel(x, y, shade, shade, shade)
+                od
+            od
+
+            animation.add(image, 50)
+
+            let gif = _decode(animation.encode_gif())
+            let expected = _colours(image)
+
+            assert gif.frames[0].count == expected.count
+
+            for at in 0..expected.count do
+                assert gif.frames[0][at] == expected[at] else "pixel {at}"
+            od
+        si
+
+        @Test()
+        Playing_once_leaves_out_the_loop_and_a_count_is_of_repeats() is
+            let animation = ANIMATION(4, 4)
+
+            animation.add(IMAGE(4, 4), 10)
+
+            animation.loops = 1
+
+            assert _decode(animation.encode_gif()).loop == -1
+
+            animation.loops = 3
+
+            assert _decode(animation.encode_gif()).loop == 2
+        si
+
+        @Test()
+        Delays_are_rounded_to_hundredths_and_no_shorter_than_two() is
+            let animation = ANIMATION(4, 4)
+
+            for delay in [0, 14, 15, 26, 1000] do
+                animation.add(IMAGE(4, 4), delay)
+            od
+
+            let delays = _decode(animation.encode_gif()).delays
+
+            assert delays[0] == 2 /\ delays[1] == 2 /\ delays[2] == 2
+                else "{delays[0]} {delays[1]} {delays[2]}"
+            assert delays[3] == 3 /\ delays[4] == 100
+        si
+    si
 si

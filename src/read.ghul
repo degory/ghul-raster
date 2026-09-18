@@ -15,11 +15,11 @@ namespace Raster is
             decode(IO.File.read_all_bytes(path))
 
         decode(bytes: ubyte[]) -> IMAGE static is
-            let header = _header(bytes)
+            let header = _DECODER.header(bytes)
 
             let raw =
-                _unfilter(
-                    _inflate(_data(bytes)),
+                _DECODER.unfilter(
+                    _DECODER.inflate(_DECODER.data(bytes)),
                     header.width,
                     header.height,
                     header.channels,
@@ -28,7 +28,7 @@ namespace Raster is
 
             let image = IMAGE(header.width, header.height)
 
-            let palette = _palette(bytes)
+            let palette = _DECODER.palette(bytes)
             let step = if header.indexed then 1 else header.channels fi
 
             for y in 0..header.height do
@@ -37,9 +37,9 @@ namespace Raster is
 
                     let seen =
                         if header.indexed then
-                            _from_palette(palette, cast int(raw[at]))
+                            _DECODER.from_palette(palette, cast int(raw[at]))
                         else
-                            _from_channels(raw, at, header.channels)
+                            _DECODER.from_channels(raw, at, header.channels)
                         fi
 
                     image.set_pixel(x, y, seen.red, seen.green, seen.blue)
@@ -48,14 +48,17 @@ namespace Raster is
 
             return image
         si
+    si
 
-        _SIGNATURE: ubyte[] static =>
+    // The pieces of reading a PNG, shared by a still image and an animation.
+    class _DECODER is
+        SIGNATURE: ubyte[] static =>
             [137ub, 80ub, 78ub, 71ub, 13ub, 10ub, 26ub, 10ub]
 
         // The colour types, by the number of bytes each pixel takes at a
         // depth of eight: grey, truecolour, indexed, grey with alpha, and
         // truecolour with alpha.
-        _channels_for(colour_type: int) -> int static =>
+        channels_for(colour_type: int) -> int static =>
             case colour_type
             when 0 then 1
             when 2 then 3
@@ -65,13 +68,13 @@ namespace Raster is
             else 0
             esac
 
-        _be32(bytes: ubyte[], at: int) -> int static =>
+        be32(bytes: ubyte[], at: int) -> int static =>
             (cast int(bytes[at]) << 24) |
             (cast int(bytes[at + 1]) << 16) |
             (cast int(bytes[at + 2]) << 8) |
             cast int(bytes[at + 3])
 
-        _kind(bytes: ubyte[], at: int) -> string static =>
+        kind_of(bytes: ubyte[], at: int) -> string static =>
             string(
                 (at + 4..at + 8)
                     |> map(index => cast char(bytes[index]))
@@ -80,7 +83,7 @@ namespace Raster is
 
         // Walks the chunks, calling back with the kind of each and where
         // its data starts and ends.
-        _chunks(
+        chunks(
             bytes: ubyte[],
             seen: (string, int, int) -> void
         ) static is
@@ -89,7 +92,7 @@ namespace Raster is
             fi
 
             for at in 0..8 do
-                if bytes[at] != _SIGNATURE[at] then
+                if bytes[at] != SIGNATURE[at] then
                     throw Exception("does not start with the PNG signature")
                 fi
             od
@@ -97,8 +100,8 @@ namespace Raster is
             let at mut = 8
 
             while at + 8 <= bytes.count do
-                let length = _be32(bytes, at)
-                let kind = _kind(bytes, at)
+                let length = be32(bytes, at)
+                let kind = kind_of(bytes, at)
 
                 if at + 12 + length > bytes.count then
                     throw Exception("chunk {kind} runs past the end")
@@ -110,7 +113,7 @@ namespace Raster is
             od
         si
 
-        _header(
+        header(
             bytes: ubyte[]
         ) -> (width: int, height: int, channels: int, indexed: bool) static is
             let width mut = 0
@@ -119,7 +122,7 @@ namespace Raster is
             let indexed mut = false
             let found mut = false
 
-            _chunks(bytes, (kind, from, to) is
+            chunks(bytes, (kind, from, to) is
                 if kind =~ "IHDR" then
                     let colour_type = cast int(bytes[from + 9])
                     let depth = cast int(bytes[from + 8])
@@ -130,7 +133,7 @@ namespace Raster is
                         )
                     fi
 
-                    channels = _channels_for(colour_type)
+                    channels = channels_for(colour_type)
 
                     if channels == 0 then
                         throw Exception(
@@ -144,8 +147,8 @@ namespace Raster is
                         )
                     fi
 
-                    width = _be32(bytes, from)
-                    height = _be32(bytes, from + 4)
+                    width = be32(bytes, from)
+                    height = be32(bytes, from + 4)
                     indexed = colour_type == 3
                     found = true
                 fi
@@ -163,10 +166,10 @@ namespace Raster is
             )
         si
 
-        _data(bytes: ubyte[]) -> ubyte[] static is
+        data(bytes: ubyte[]) -> ubyte[] static is
             let compressed = LIST[ubyte]()
 
-            _chunks(bytes, (kind, from, to) is
+            chunks(bytes, (kind, from, to) is
                 if kind =~ "IDAT" then
                     for at in from..to do
                         compressed.add(bytes[at])
@@ -177,10 +180,10 @@ namespace Raster is
             return compressed |> collect_array()
         si
 
-        _palette(bytes: ubyte[]) -> ubyte[] static is
+        palette(bytes: ubyte[]) -> ubyte[] static is
             let entries = LIST[ubyte]()
 
-            _chunks(bytes, (kind, from, to) is
+            chunks(bytes, (kind, from, to) is
                 if kind =~ "PLTE" then
                     for at in from..to do
                         entries.add(bytes[at])
@@ -191,7 +194,7 @@ namespace Raster is
             return entries |> collect_array()
         si
 
-        _from_palette(
+        from_palette(
             palette: ubyte[], index: int
         ) -> (red: ubyte, green: ubyte, blue: ubyte) static =>
             if index * 3 + 2 >= palette.count then
@@ -204,33 +207,33 @@ namespace Raster is
 
         // White is what an image starts as, so compositing onto it is what
         // keeps a transparent pixel looking the way it did.
-        _over_white(value: ubyte, alpha: ubyte) -> ubyte static =>
+        over_white(value: ubyte, alpha: ubyte) -> ubyte static =>
             cast ubyte(
                 (cast int(value) * cast int(alpha) +
                  255 * (255 - cast int(alpha))) / 255
             )
 
-        _from_channels(
+        from_channels(
             raw: ubyte[], at: int, channels: int
         ) -> (red: ubyte, green: ubyte, blue: ubyte) static =>
             case channels
             when 1 then
                 (red = raw[at], green = raw[at], blue = raw[at])
             when 2 then
-                (let grey = _over_white(raw[at], raw[at + 1])
+                (let grey = over_white(raw[at], raw[at + 1])
 
                  (red = grey, green = grey, blue = grey))
             when 3 then
                 (red = raw[at], green = raw[at + 1], blue = raw[at + 2])
             else
-                (red = _over_white(raw[at], raw[at + 3]),
-                 green = _over_white(raw[at + 1], raw[at + 3]),
-                 blue = _over_white(raw[at + 2], raw[at + 3]))
+                (red = over_white(raw[at], raw[at + 3]),
+                 green = over_white(raw[at + 1], raw[at + 3]),
+                 blue = over_white(raw[at + 2], raw[at + 3]))
             esac
 
         // The zlib wrapper is two bytes of header and four of checksum
         // around a raw deflate stream, which is what DeflateStream reads.
-        _inflate(zlib: ubyte[]) -> ubyte[] static is
+        inflate(zlib: ubyte[]) -> ubyte[] static is
             if zlib.count < 6 then
                 throw Exception("the image data is too short to be a zlib stream")
             fi
@@ -250,7 +253,7 @@ namespace Raster is
             return out.to_array()
         si
 
-        _paeth(left: int, above: int, corner: int) -> int static =>
+        paeth(left: int, above: int, corner: int) -> int static =>
             (let estimate = left + above - corner
 
              let from_left = Math.abs(estimate - left)
@@ -267,7 +270,7 @@ namespace Raster is
 
         // Each scanline carries a filter byte saying how it was written in
         // terms of the bytes to its left and the line above.
-        _unfilter(
+        unfilter(
             raw: ubyte[],
             width: int,
             height: int,
@@ -319,7 +322,7 @@ namespace Raster is
                         when 1 then value + left
                         when 2 then value + above
                         when 3 then value + (left + above) / 2
-                        when 4 then value + _paeth(left, above, corner)
+                        when 4 then value + paeth(left, above, corner)
                         else throw Exception("filter {filter} is not a filter")
                         esac
 
@@ -329,5 +332,60 @@ namespace Raster is
 
             return out |> collect_array()
         si
+
+        // Compressed pixels for a width by height rectangle, drawn onto an
+        // image with its top left at (left, top). Where `over` is set, a
+        // pixel with alpha is laid over what the image already holds;
+        // otherwise, as for a still image, it is laid over white.
+        draw(
+            canvas: IMAGE,
+            compressed: ubyte[],
+            header: (width: int, height: int, channels: int, indexed: bool),
+            palette: ubyte[],
+            left: int, top: int, width: int, height: int,
+            over: bool
+        ) static is
+            let raw =
+                unfilter(inflate(compressed), width, height, header.channels, header.indexed)
+
+            let step = if header.indexed then 1 else header.channels fi
+            let alpha = !header.indexed /\ (header.channels == 2 \/ header.channels == 4)
+
+            for y in 0..height do
+                for x in 0..width do
+                    let at = (y * width + x) * step
+
+                    let seen =
+                        if header.indexed then
+                            from_palette(palette, cast int(raw[at]))
+                        elif over /\ alpha then
+                            _over(canvas.pixel(left + x, top + y), raw, at, header.channels)
+                        else
+                            from_channels(raw, at, header.channels)
+                        fi
+
+                    canvas.set_pixel(left + x, top + y, seen.red, seen.green, seen.blue)
+                od
+            od
+        si
+
+        _over(
+            under: (red: ubyte, green: ubyte, blue: ubyte),
+            raw: ubyte[], at: int, channels: int
+        ) -> (red: ubyte, green: ubyte, blue: ubyte) static =>
+            (let a = cast int(raw[at + channels - 1])
+
+             if channels == 2 then
+                 (red = _lay(raw[at], under.red, a),
+                  green = _lay(raw[at], under.green, a),
+                  blue = _lay(raw[at], under.blue, a))
+             else
+                 (red = _lay(raw[at], under.red, a),
+                  green = _lay(raw[at + 1], under.green, a),
+                  blue = _lay(raw[at + 2], under.blue, a))
+             fi)
+
+        _lay(value: ubyte, under: ubyte, alpha: int) -> ubyte static =>
+            cast ubyte((cast int(value) * alpha + cast int(under) * (255 - alpha)) / 255)
     si
 si
