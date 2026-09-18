@@ -537,136 +537,20 @@ namespace Raster is
         encode() -> ubyte[] =>
             (let out = IO.MemoryStream()
 
-             out.write([137ub, 80ub, 78ub, 71ub, 13ub, 10ub, 26ub, 10ub], 0, 8)
-
-             let header = IO.MemoryStream()
-
-             _write_int(header, width)
-             _write_int(header, height)
-
-             header.write([8ub, 2ub, 0ub, 0ub, 0ub], 0, 5)
-
-             _write_chunk(out, [73ub, 72ub, 68ub, 82ub], header.to_array())
-             _write_chunk(out, [73ub, 68ub, 65ub, 84ub], _zlib(_scanlines()))
-             _write_chunk(out, [73ub, 69ub, 78ub, 68ub], [])
+             _PNG.write_start(out, width, height)
+             _PNG.write_chunk(out, _PNG.IDAT, _PNG.compress(rgb(), width, height))
+             _PNG.write_chunk(out, _PNG.IEND, [])
 
              out.to_array())
 
-        // Each row copied whole after the zero its filter byte starts as.
-        _scanlines() -> ubyte[] =>
-            (let stride = width * 3
-             let raw = System.GC.allocate_array[ubyte](height * (stride + 1), false)
+        // A copy of the pixels, three bytes each for red, green and blue, a
+        // row at a time from the top.
+        rgb() -> ubyte[] =>
+            (let copy = System.GC.allocate_array[ubyte](_pixels.count, false)
 
-             for y in 0..height do
-                 _pixels.copy_to(y * stride, raw, y * (stride + 1) + 1, stride)
-             od
+             _pixels.copy_to(copy)
 
-             raw)
-
-        _zlib(data: ubyte[]) -> ubyte[] =>
-            (let out = IO.MemoryStream()
-
-             out.write_byte(0x78ub)
-             out.write_byte(0x01ub)
-
-             let stream =
-                 System.IO.Compression.DeflateStream(
-                     out,
-                     System.IO.Compression.CompressionMode.COMPRESS,
-                     true
-                 )
-
-             stream.write(data, 0, data.count)
-             stream.close()
-
-             _write_int(out, _adler32(data))
-
-             out.to_array())
-
-        // Sums are taken modulo 65521 once a block rather than once a byte:
-        // 5552 bytes is the most that cannot carry the sums past what a
-        // long holds between reductions, so the result is the same.
-        _adler32(data: ubyte[]) -> int static =>
-            (let low mut = 1L
-             let high mut = 0L
-             let at mut = 0
-
-             while at < data.count do
-                 let stop = Math.min(at + 5552, data.count)
-
-                 while at < stop do
-                     low = low + cast long(data[at])
-                     high = high + low
-                     at = at + 1
-                 od
-
-                 low = low % 65521L
-                 high = high % 65521L
-             od
-
-             cast int((high << 16) | low))
-
-        _write_int(out: IO.MemoryStream, value: int) static is
-            out.write_byte(cast ubyte((value >> 24) & 0xFF))
-            out.write_byte(cast ubyte((value >> 16) & 0xFF))
-            out.write_byte(cast ubyte((value >> 8) & 0xFF))
-            out.write_byte(cast ubyte(value & 0xFF))
-        si
-
-        _write_chunk(out: IO.MemoryStream, kind: ubyte[], data: ubyte[]) static is
-            _write_int(out, data.count)
-
-            out.write(kind, 0, kind.count)
-            out.write(data, 0, data.count)
-
-            _write_int(
-                out,
-                cast int(_crc32(_crc32(0xFFFFFFFFu, kind), data) ^ 0xFFFFFFFFu)
-            )
-        si
-
-        // The running CRC carried on over more bytes, a byte at a time
-        // through a table rather than a bit at a time.
-        _crc32(remainder: uint, data: ubyte[]) -> uint static =>
-            (let table = _crc_table
-             let running mut = remainder
-             let at mut = 0
-
-             while at < data.count do
-                 running =
-                     table[cast int((running ^ cast uint(data[at])) & 0xFFu)] ^
-                     (running >>> 8)
-
-                 at = at + 1
-             od
-
-             running)
-
-        _crc_table: uint[] static =>
-            (if !_crc_table_cache? then
-                 let entries = LIST[uint]()
-
-                 for index in 0..256 do
-                     let entry mut = cast uint(index)
-
-                     for _ in 0..8 do
-                         entry =
-                             if (entry & 1u) != 0u then
-                                 0xEDB88320u ^ (entry >>> 1)
-                             else
-                                 entry >>> 1
-                             fi
-                     od
-
-                     entries.add(entry)
-                 od
-
-                 _crc_table_cache = entries.to_array()
-             fi
-
-             _crc_table_cache)
-
-        _crc_table_cache: uint[]? static
+             copy)
 
         // Everything is drawn as strokes, so this is the only place pixels
         // are touched by a drawing operation.

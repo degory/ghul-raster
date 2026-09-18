@@ -704,4 +704,127 @@ namespace Raster.Tests is
                 else "{across.right - across.left} pixels wide"
         si
     si
+
+    @TestClass()
+    class ANIMATION_Tests is
+        init() is si
+
+        // The kinds of chunk in a PNG, in order.
+        _kinds(bytes: ubyte[]) -> Collections.List[string] =>
+            (let kinds = Collections.LIST[string]()
+             let at mut = 8
+
+             while at < bytes.count do
+                 let length =
+                     (cast int(bytes[at]) << 24) | (cast int(bytes[at + 1]) << 16) |
+                     (cast int(bytes[at + 2]) << 8) | cast int(bytes[at + 3])
+
+                 kinds.add(
+                     "{cast char(bytes[at + 4])}{cast char(bytes[at + 5])}"
+                     "{cast char(bytes[at + 6])}{cast char(bytes[at + 7])}"
+                 )
+
+                 at = at + 12 + length
+             od
+
+             kinds)
+
+        _frames(count: int) -> ANIMATION =>
+            (let animation = ANIMATION(20, 20)
+             let image = IMAGE(20, 20)
+
+             for index in 0..count do
+                 image.clear()
+                 image.colour(cast ubyte(index * 60), 0ub, 0ub)
+                 image.disc(10.0D, 10.0D, 6.0D)
+
+                 animation.add(image, 100)
+             od
+
+             animation)
+
+        @Test()
+        Frames_after_the_first_are_frame_data() is
+            let kinds = _kinds(_frames(3).encode())
+
+            assert (kinds |> join(" ")) =~
+                "IHDR acTL fcTL IDAT fcTL fdAT fcTL fdAT IEND"
+                else "chunks were {kinds |> join(" ")}"
+        si
+
+        @Test()
+        A_reader_that_knows_no_animation_sees_the_first_frame() is
+            let animation = ANIMATION(20, 20)
+            let first = IMAGE(20, 20)
+            let second = IMAGE(20, 20)
+
+            first.colour(200ub, 0ub, 0ub)
+            first.disc(10.0D, 10.0D, 6.0D)
+            second.colour(0ub, 0ub, 200ub)
+            second.disc(10.0D, 10.0D, 6.0D)
+
+            animation.add(first, 100)
+            animation.add(second, 100)
+
+            let read = IMAGE.decode(animation.encode())
+
+            assert read.pixel(10, 10) =~ first.pixel(10, 10)
+            assert read.pixel(0, 0) =~ first.pixel(0, 0)
+        si
+
+        @Test()
+        A_frame_is_a_copy_of_the_image_when_it_was_added() is
+            let animation = ANIMATION(20, 20)
+            let image = IMAGE(20, 20)
+
+            image.colour(0ub, 200ub, 0ub)
+            image.disc(10.0D, 10.0D, 6.0D)
+
+            animation.add(image, 50)
+
+            image.clear()
+
+            assert IMAGE.decode(animation.encode()).pixel(10, 10) =~
+                (red = 0ub, green = 200ub, blue = 0ub)
+                else "clearing the image changed the frame already added"
+        si
+
+        @Test()
+        The_same_frames_encode_to_the_same_bytes() is
+            let first = _frames(2).encode()
+            let second = _frames(2).encode()
+
+            assert first.count == second.count
+
+            for at in 0..first.count do
+                assert first[at] == second[at] else "byte {at} differs"
+            od
+        si
+
+        @Test()
+        A_frame_of_the_wrong_size_is_refused() is
+            let animation = ANIMATION(20, 20)
+
+            try
+                animation.add(IMAGE(10, 20), 100)
+
+                assert false else "a narrower frame was accepted"
+            catch _: System.ArgumentException
+            yrt
+        si
+
+        @Test()
+        The_loop_count_is_what_was_asked() is
+            let animation = _frames(1)
+
+            animation.loops = 3
+
+            let bytes = animation.encode()
+
+            // The animation control chunk follows the 25 bytes of the
+            // signature and header: length, kind, frame count, then plays.
+            assert bytes[33 + 4 + 4 + 3] == 1ub else "frame count is not 1"
+            assert bytes[33 + 4 + 4 + 7] == 3ub else "loop count is not 3"
+        si
+    si
 si

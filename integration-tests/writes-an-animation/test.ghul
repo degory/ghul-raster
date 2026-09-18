@@ -1,0 +1,34 @@
+use System.Math
+use Raster.ANIMATION
+use Raster.COLOUR_MAP
+use Raster.IMAGE
+
+// A pendulum swinging, drawn into one image frame after frame and written as
+// a single animated PNG that loops forever.
+let frames = 12
+
+let image = IMAGE(160, 120)
+let animation = ANIMATION(160, 120)
+
+image.view(-1.0D, -1.1D, 1.0D, 0.4D)
+
+for index in 0..frames do
+    let angle = 0.6D * Math.cos(2.0D * Math.pi * cast double(index) / cast double(frames))
+    let x = Math.sin(angle)
+    let y = -Math.cos(angle)
+
+    image.clear()
+
+    image.colour(120ub, 120ub, 120ub)
+    image.stroke(2.0D)
+    image.line(0.0D, 0.0D, x, y)
+
+    image.colour(COLOUR_MAP.hue(cast double(index) / cast double(frames)))
+    image.disc(x, y, 0.12D)
+
+    animation.add(image, 80)
+od
+
+animation.write("pendulum.png")
+
+animation.show("pendulum.png")

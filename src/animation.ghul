@@ -1,0 +1,123 @@
+namespace Raster is
+    use Collections.LIST
+
+    // Frames collected one after another and written as an animated PNG,
+    // which a browser plays and loops by itself. Each frame is a copy of an
+    // image as it stood when it was added, so a program can draw every
+    // frame into the same image.
+    //
+    // A reader that does not know about animation sees the first frame as
+    // an ordinary PNG.
+    class ANIMATION is
+        width: int
+        height: int
+
+        // How many times the animation plays. Zero, the default, is forever.
+        loops: int public
+
+        _frames: LIST[ubyte[]]
+        _delays: LIST[int]
+
+        init(width: int, height: int) is
+            self.width = width
+            self.height = height
+
+            loops = 0
+
+            _frames = LIST[ubyte[]]()
+            _delays = LIST[int]()
+        si
+
+        frame_count: int => _frames.count
+
+        // The image as it stands, shown for `delay` milliseconds before the
+        // next frame. The image has to be the animation's size.
+        add(image: IMAGE, delay: int) is
+            if image.width != width \/ image.height != height then
+                throw System.ArgumentException(
+                    "a {image.width} by {image.height} frame does not fit a {width} by {height} animation"
+                )
+            fi
+
+            _frames.add(_PNG.compress(image.rgb(), width, height))
+            _delays.add(if delay < 0 then 0 elif delay > 65535 then 65535 else delay fi)
+        si
+
+        write(path: string) is
+            IO.File.write_all_bytes(path, encode())
+        si
+
+        // Names the file this program wrote, the way `IMAGE.show` does.
+        show(path: string) is
+            IO.Std.write_line("<<image {path}>>")
+        si
+
+        // The header, then how many frames and plays, then each frame's
+        // control chunk followed by its data. The first frame's data is an
+        // ordinary image data chunk; the rest are frame data chunks, which
+        // carry a sequence number shared with the control chunks.
+        encode() -> ubyte[] =>
+            (if _frames.count == 0 then
+                 throw System.InvalidOperationException("an animation needs at least one frame")
+             fi
+
+             let out = IO.MemoryStream()
+
+             _PNG.write_start(out, width, height)
+
+             let control = IO.MemoryStream()
+
+             _PNG.write_int(control, _frames.count)
+             _PNG.write_int(control, loops)
+
+             _PNG.write_chunk(out, _ACTL, control.to_array())
+
+             let sequence mut = 0
+
+             for index in 0.._frames.count do
+                 _PNG.write_chunk(out, _FCTL, _frame_control(sequence, _delays[index]))
+
+                 sequence = sequence + 1
+
+                 if index == 0 then
+                     _PNG.write_chunk(out, _PNG.IDAT, _frames[index])
+                 else
+                     let data = IO.MemoryStream()
+
+                     _PNG.write_int(data, sequence)
+
+                     data.write(_frames[index], 0, _frames[index].count)
+
+                     _PNG.write_chunk(out, _FDAT, data.to_array())
+
+                     sequence = sequence + 1
+                 fi
+             od
+
+             _PNG.write_chunk(out, _PNG.IEND, [])
+
+             out.to_array())
+
+        // Every frame covers the whole image, replaces what was there, and
+        // leaves it in place for the next.
+        _frame_control(sequence: int, delay: int) -> ubyte[] =>
+            (let out = IO.MemoryStream()
+
+             _PNG.write_int(out, sequence)
+             _PNG.write_int(out, width)
+             _PNG.write_int(out, height)
+             _PNG.write_int(out, 0)
+             _PNG.write_int(out, 0)
+             _PNG.write_short(out, delay)
+             _PNG.write_short(out, 1000)
+
+             out.write_byte(0ub)
+             out.write_byte(0ub)
+
+             out.to_array())
+
+        _ACTL: ubyte[] static => [97ub, 99ub, 84ub, 76ub]
+        _FCTL: ubyte[] static => [102ub, 99ub, 84ub, 76ub]
+        _FDAT: ubyte[] static => [102ub, 100ub, 65ub, 84ub]
+    si
+si

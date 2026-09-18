@@ -115,6 +115,32 @@ ignored by both writers.
 with somewhere else to send them. The output is deterministic: the same pixels
 always encode to the same bytes.
 
+## Animation
+
+`ANIMATION` collects frames and writes them as one animated PNG, which a browser
+plays and loops by itself. `add` copies an image as it stands, with how long to
+show it in milliseconds, so a program can clear and redraw the same image for
+each frame:
+
+```ghul
+let image = IMAGE(160, 120)
+let animation = ANIMATION(160, 120)
+
+for index in 0..12 do
+    image.clear()
+    draw(image, index)
+    animation.add(image, 80)
+od
+
+animation.write("swing.png")
+animation.show("swing.png")
+```
+
+It loops forever unless `loops` says how many times to play. Every frame is
+the whole image, compressed on its own when it is added, and the output is
+deterministic. A reader that does not know about animation, `IMAGE.read`
+among them, sees the first frame.
+
 ## Reading a PNG
 
 `IMAGE.read` decodes a PNG file into an image, and `IMAGE.decode` does the
