@@ -1,5 +1,10 @@
 # ghul-raster
 
+[![CI](https://img.shields.io/github/actions/workflow/status/degory/ghul-raster/cicd.yml?branch=main)](https://github.com/degory/ghul-raster/actions/workflows/cicd.yml?query=branch%3Amain)
+[![NuGet version (ghul.raster)](https://img.shields.io/nuget/v/ghul.raster.svg)](https://www.nuget.org/packages/ghul.raster/)
+[![License](https://img.shields.io/github/license/degory/ghul-raster)](https://github.com/degory/ghul-raster/blob/main/LICENSE)
+[![ghūl](https://img.shields.io/badge/gh%C5%ABl-100%25!-information)](https://ghul.dev)
+
 Drawing into a PNG, from ghūl, with no dependency on a graphics stack.
 
 `System.Drawing.Common` is GDI+ and throws on Linux; SkiaSharp needs a native
