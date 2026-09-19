@@ -9,7 +9,7 @@ namespace Raster is
     // works in the space its problem is stated in. Sizes are in pixels: a
     // label is as tall as it is asked to be however the axes are scaled, and
     // a stroke is as wide as it is asked to be.
-    class IMAGE is
+    class IMAGE: Ghul.Renderable is
         width: int
         height: int
 
@@ -583,6 +583,11 @@ namespace Raster is
              _PNG.write_chunk(out, _PNG.IEND, [])
 
              out.to_array())
+
+        // The image as a PNG, for a host that shows values - a notebook,
+        // a REPL - to show in place of the text `$` writes for it.
+        representations() -> Collections.Iterable[(mime: string, content: ubyte[])] pure =>
+            [(mime = "image/png", content = encode())]
 
         // An image holding these pixels, laid out as `rgb` gives them.
         from_rgb(width: int, height: int, rgb: ubyte[]) -> IMAGE static is

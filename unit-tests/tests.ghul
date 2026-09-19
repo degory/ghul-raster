@@ -339,6 +339,22 @@ namespace Raster.Tests is
             assert _inked(image) == 0 else "ink survived the clear"
         si
 
+        // A host that shows values - a notebook, a REPL - finds the image
+        // as a PNG through the runtime's Renderable.
+        @Test()
+        An_image_offers_itself_as_a_png() is
+            let image = IMAGE(30, 20)
+
+            image.line(2.0D, 2.0D, 27.0D, 17.0D)
+
+            let held: Ghul.Renderable = image
+            let offered = Collections.LIST[(mime: string, content: ubyte[])](held.representations())
+
+            assert offered.count == 1
+            assert offered[0].mime =~ "image/png"
+            assert IMAGE.decode(offered[0].content).pixel(15, 10) =~ image.pixel(15, 10)
+        si
+
         @Test()
         Encoding_gives_the_bytes_a_write_would() is
             let image = IMAGE(30, 20)
