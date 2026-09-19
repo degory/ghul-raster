@@ -252,6 +252,22 @@ line, which names a file the reader was told about anyway.
 Nothing here knows where the output is going, and nothing that reads the
 marker needs to know how the image was drawn.
 
+A host that shows values - a notebook, a REPL - needs no file at all. An
+`IMAGE` implements `Ghul.Renderable`, offering itself as `image/png`, so a
+cell that ends on an image, or passes one to `display`, shows the picture
+where the host honours that type:
+
+```ghul
+let image = IMAGE(200, 100)
+
+image.line(10.0, 10.0, 190.0, 90.0)
+
+display(image)
+```
+
+A host that does not honour it shows the image's text instead, as it would
+for any other value.
+
 
 ## The font
 
