@@ -84,6 +84,11 @@ they share, so the background shows through as a pale seam between them.
 a tiling or a row of bars meets without a seam. Where shapes overlap, their
 colours mix.
 
+That mixing is why a surface drawn as depth-sorted quadrilaterals cannot use
+`SHAPES`: there the later shape has to cover the earlier one rather than blend
+with it. Fill those one at a time, and close the seam by stroking each shape's
+own outline in its own colour straight after filling it.
+
 `flood_fill` recolours every pixel joined to the one it is given and the colour
 that one is. It takes pixels rather than user coordinates, as `set_pixel` does:
 the region is a property of the image rather than of what the view describes.
